@@ -2,7 +2,7 @@ import filecmp
 
 from adserver.datagen.cli import run
 
-FILES = ["users.parquet", "campaigns.parquet", "events.parquet"]
+FILES = ["users.parquet", "campaigns.parquet", "events.parquet", "rides.parquet"]
 
 
 def test_same_seed_produces_identical_files(tmp_path):
@@ -22,3 +22,4 @@ def test_different_seeds_produce_different_events(tmp_path):
     run(seed=7, out=out2)
 
     assert not filecmp.cmp(out1 / "events.parquet", out2 / "events.parquet", shallow=False)
+    assert not filecmp.cmp(out1 / "rides.parquet", out2 / "rides.parquet", shallow=False)

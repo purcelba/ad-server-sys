@@ -2,14 +2,20 @@
 
 ## What it does
 Generates the synthetic "world" the rest of the project runs against:
-a catalog of users and ad campaigns, and 30 days of impression/click
-history where clicks follow a planted, documented signal (segment ×
-category, with a time-of-day condition for one segment). Output is three
-Parquet files: `users.parquet`, `campaigns.parquet`, `events.parquet`.
+a catalog of users and ad campaigns, 30 days of impression/click history
+where clicks follow a planted, documented signal (segment × category, with
+a time-of-day condition for one segment), and 30 days of ride history with
+a planted segment-dependent frequency. Output is four Parquet files:
+`users.parquet`, `campaigns.parquet`, `events.parquet`, `rides.parquet`.
 
 Generation is fully deterministic — a single `numpy.random.default_rng(seed)`
-instance is threaded explicitly through user, campaign, and event
+instance is threaded explicitly through user, campaign, event, and ride
 generation in a fixed order; same seed → byte-identical output files.
+
+`rides.parquet` was added during Phase 1 planning, after `phase-0` was
+already tagged — a flagged amendment (see `PROGRESS.md`'s Phase 0 entry)
+to give Phase 1's `user_rides_per_week` batch feature a real data source,
+since it has no natural basis in ad impression/click events alone.
 
 ## How to run and test it alone
 ```bash
@@ -48,6 +54,16 @@ and `campaigns.parquet` columns. `events.parquet` (defined in this phase):
 | `hour_of_day` | int 0–23 | denormalized from `ts` |
 | `click_id` | str, nullable | for click rows, FK → the impression's `event_id` |
 
+`rides.parquet` (defined during Phase 1 planning, a flagged Phase 0 amendment):
+
+| column | type | notes |
+|---|---|---|
+| `ride_id` | str | unique |
+| `user_id` | str | FK → users |
+| `ts` | datetime | ride timestamp within the 30-day window |
+| `ride_date` | date | derived from `ts` |
+| `ride_type` | str (enum) | `standard` \| `shared` \| `premium`, uniform |
+
 ## Planted effects (segment × category lift factors)
 
 Click probability = `base_ctr (3%) × lift(segment, category, hour_of_day)`,
@@ -77,3 +93,20 @@ show no directional lift in any category, and `homebody` should show
 uniformly suppressed engagement — useful later (Phase 4) for sanity-checking
 that a trained model's learned lifts track this ground truth rather than
 picking up spurious signal.
+
+## Planted effects (ride frequency)
+
+Rides/user/day are Poisson-distributed with a segment-dependent mean
+(`adserver/datagen/rides.py::RIDES_PER_DAY_MEAN`), mirroring the ads lift
+design so `homebody` stays a low-engagement control across every signal,
+not just ads CTR:
+
+| segment | mean rides/day |
+|---|---|
+| commuter | 2.5 |
+| traveler | 1.5 |
+| nightlife | 1.0 |
+| foodie | 1.0 |
+| shopper | 1.0 |
+| general | 1.0 |
+| homebody | 0.3 (suppressed — low-engagement control) |

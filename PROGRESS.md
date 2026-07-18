@@ -59,3 +59,22 @@ cross-component check. 24 tests, all passing against live infra.
 batch feature named in `phases.md`) has no natural source in an ads event
 log — Phase 1 will need to either add a synthetic rides signal or redefine
 the feature.
+
+**Amendment (during Phase 1 planning, flagged before making the change):**
+resolved the `user_rides_per_week` gap by adding `rides.parquet` to
+`datagen/` — a new table (`ride_id`, `user_id`, `ts`, `ride_date`,
+`ride_type`), Poisson-generated with a segment-dependent daily rate
+(commuter 2.5, traveler 1.5, nightlife/foodie/shopper/general 1.0, homebody
+0.3 — mirroring the ads lift design so homebody stays a low-engagement
+control across every signal). Decided after discussing the production
+pattern directly: real-time "current ride" state and long-term "ride
+history" aggregates are different concerns with different store
+requirements (see `CLAUDE.md`'s "Real-time state vs. long-term aggregates"
+section) — `user_rides_per_week` is a rolling aggregate, so it's squarely a
+*batch* concept, independent of any future real-time ride-state feature.
+This required touching Phase 0's already-tagged code; per `CLAUDE.md`'s
+standing instructions, the change was flagged and discussed with the user
+before being made, and `phase-0`'s tag was not moved for it — it's
+recorded here as an explicit amendment instead. `phases.md`'s Phase 0 build
+item and AC2 were updated to mention `rides.parquet`; all Phase 0 tests
+(now 26) still pass.

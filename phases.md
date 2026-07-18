@@ -42,13 +42,13 @@ A learning project: a miniature real-time ad serving system combining batch and 
 
 **Build:**
 - [x] Repo scaffold per layout above; Docker Compose file bringing up Redpanda, DynamoDB-local, Redis; `make up`, `make test`, `make demo` targets.
-- [x] `datagen/`: generates (a) a catalog of ~50 users with segments (commuter, traveler, nightlife, etc.), (b) ~40 ad campaigns across two demand types — `auction` (bid, budget) and `guaranteed` (impression goal, flight dates) — with categories (food, retail, entertainment, travel, transit), and (c) 30 days of historical impression/click logs where clicks follow planted preferences (e.g. traveler segment clicks travel ads at 3x base rate; nightlife segment clicks food/entertainment at night). Seeded and deterministic.
+- [x] `datagen/`: generates (a) a catalog of ~50 users with segments (commuter, traveler, nightlife, etc.), (b) ~40 ad campaigns across two demand types — `auction` (bid, budget) and `guaranteed` (impression goal, flight dates) — with categories (food, retail, entertainment, travel, transit), (c) 30 days of historical impression/click logs where clicks follow planted preferences (e.g. traveler segment clicks travel ads at 3x base rate; nightlife segment clicks food/entertainment at night), and (d) 30 days of ride history with a planted segment-dependent frequency (`rides.parquet` — added during Phase 1 planning as a flagged amendment, to give Phase 1's `user_rides_per_week` feature a real data source; see `PROGRESS.md`). Seeded and deterministic.
 
 **Key decisions locked:** Python + uv; Polars for transforms; the planted-signal correlations documented in `datagen/README.md` so model evals can be sanity-checked against ground truth.
 
 **Acceptance criteria:**
 - [x] 1. `make up` brings up all infra containers healthy.
-- [x] 2. `datagen` produces users.parquet, campaigns.parquet, events.parquet deterministically (same seed → identical files).
+- [x] 2. `datagen` produces users.parquet, campaigns.parquet, events.parquet, rides.parquet deterministically (same seed → identical files).
 - [x] 3. A written table in the README of planted effects (segment × category lift factors).
 - [x] 4. EDA visualizations generated from datagen output: CTR by (user segment × campaign category), and CTR by (user segment × time of day) — both saved as PNGs and visually consistent with the planted lift table.
 

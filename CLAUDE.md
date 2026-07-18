@@ -245,8 +245,12 @@ future phase's README claims otherwise, that's a spec deviation — flag it.
 
 ## Data schemas
 
-The Phase 0 synthetic catalog (`datagen/`) produces three entity/event
-tables, all locked as of the `phase-0` tag. Later phases only ever *add*
+The Phase 0 synthetic catalog (`datagen/`) produces four entity/event
+tables. `users.parquet`, `campaigns.parquet`, `events.parquet` are locked
+as of the `phase-0` tag; `rides.parquet` was added during Phase 1 planning
+as a flagged amendment (see `PROGRESS.md`'s Phase 0 entry and "Real-time
+state vs. long-term aggregates" above) to give the `user_rides_per_week`
+batch feature a real data source. Later phases only ever *add*
 columns/files (e.g. Phase 1's `audience_memberships`) — they don't redefine
 these. Full generation details (segment counts, campaign ranges, lift
 table) live in `adserver/datagen/README.md`; this is the column contract.
@@ -286,6 +290,15 @@ table) live in `adserver/datagen/README.md`; this is the column contract.
 | `event_date` | date | derived from `ts` |
 | `hour_of_day` | int 0–23 | denormalized from `ts` |
 | `click_id` | str, nullable | for click rows only, FK → the impression's `event_id`; null on impression rows |
+
+### `rides.parquet` (added during Phase 1 planning — flagged Phase 0 amendment)
+| column | type | notes |
+|---|---|---|
+| `ride_id` | str | unique, e.g. `r_00000001` |
+| `user_id` | str | FK → users |
+| `ts` | datetime (us) | ride timestamp within the history window |
+| `ride_date` | date | derived from `ts` |
+| `ride_type` | str (enum) | `standard` \| `shared` \| `premium`, uniform |
 
 `audience_memberships` (on users) and audience *targeting* (on campaigns)
 are Phase 1 additions (`audiences.yaml`) — not part of the Phase 0 catalog.

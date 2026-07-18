@@ -12,11 +12,13 @@ experimentation), built phase by phase with Claude Code at local scale.
 ## Phase 0: planted synthetic signal
 
 `datagen/` (see [`adserver/datagen/README.md`](adserver/datagen/README.md))
-generates a synthetic catalog of users, ad campaigns, and 30 days of
+generates a synthetic catalog of users, ad campaigns, 30 days of
 impression/click history where clicks follow a planted segment × category
-(× time-of-day) preference. Click probability = `base_ctr (3%) ×
-lift(segment, category, hour_of_day)`, sourced from
-`adserver/datagen/lifts.py::LIFT_TABLE`:
+(× time-of-day) preference, and 30 days of ride history with a planted
+segment-dependent frequency (`rides.parquet`, added during Phase 1
+planning as a flagged Phase 0 amendment — see `PROGRESS.md`). Click
+probability = `base_ctr (3%) × lift(segment, category, hour_of_day)`,
+sourced from `adserver/datagen/lifts.py::LIFT_TABLE`:
 
 | segment | category | condition | lift |
 |---|---|---|---|
