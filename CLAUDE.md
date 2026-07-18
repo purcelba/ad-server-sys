@@ -49,23 +49,44 @@ determinism/reproducibility ethos.
   intentionally uses a plain Python consumer instead of Flink, documented
   as a locked decision in `phases.md` Phase 2.
 - **`dynamodb-local`** (`amazon/dynamodb-local:2.5.4`) — the durable
-  *offline* feature store (store of record). Batch-computed features
-  (Phase 1) get materialized here with `computed_at` timestamps; the
-  feature service (Phase 3) falls back to it when Redis misses. Chosen
-  because it's the actual DynamoDB API running locally — no emulation gap
-  between local dev and Phase 8's optional real-AWS slice, which points
-  the same code at a real DynamoDB table. *Production analog:* DynamoDB
-  itself.
-- **`redis`** (`redis:7.4-alpine`) — the *online*, low-latency feature
-  cache and, later, pacing/delivery counters (Phase 5). Real-time features
-  from `stream_features/` (Phase 2) are written here with TTLs matching
-  each feature's freshness SLA; the feature service reads Redis first. A
-  small, well-understood in-memory store fits the sub-10ms p99 target
-  (Phase 3 AC4) and the sub-100ms serving SLO (Phase 5) without needing a
-  heavier caching layer. *Production analog:* Redis (or an equivalent
-  in-memory store) fronting a feature store — this is a case where the
-  local stand-in and the production component are literally the same
+  *online* feature store (store of record for serving). Batch-computed
+  features (Phase 1) get materialized *into* it with `computed_at`
+  timestamps; the feature service (Phase 3) falls back to it when Redis
+  misses. Chosen because it's the actual DynamoDB API running locally —
+  no emulation gap between local dev and Phase 8's optional real-AWS
+  slice, which points the same code at a real DynamoDB table. *Production
+  analog:* DynamoDB itself.
+- **`redis`** (`redis:7.4-alpine`) — the low-latency, in-memory front of
+  the online feature store, and, later, pacing/delivery counters (Phase
+  5). Real-time features from `stream_features/` (Phase 2) are written
+  here with TTLs matching each feature's freshness SLA; the feature
+  service reads Redis first, falling back to DynamoDB-local. A small,
+  well-understood in-memory store fits the sub-10ms p99 target (Phase 3
+  AC4) and the sub-100ms serving SLO (Phase 5) without needing a heavier
+  caching layer. *Production analog:* Redis (or an equivalent in-memory
+  store) fronting a feature store — this is a case where the local
+  stand-in and the production component are literally the same
   technology.
+
+**DynamoDB vs. DuckDB — not the same thing, despite the name.** DynamoDB
+(-local) is a distributed key-value store: point lookups by entity ID,
+low-latency, the *online serving-side* store described above. DuckDB is a
+different, unrelated technology — an embedded, in-process analytical (OLAP)
+query engine, more like SQLite but columnar, with no server of its own. It
+never appears in `docker-compose.yml`; it's a Python library dependency
+used by `batch_features/` (Phase 1) and `ranking/train.py` (Phase 4) to run
+SQL directly over the date-partitioned Parquet files in the *offline*
+store — in particular, point-in-time queries ("features as of day 15")
+that training needs to avoid leaking future values into training examples.
+Same underlying data flows one direction: Parquet (queried via DuckDB) →
+materialized into DynamoDB-local (queried via point lookup) for serving.
+
+| | DynamoDB(-local) | DuckDB |
+|---|---|---|
+| Role | online, durable feature store | query engine over the offline Parquet store |
+| Access pattern | point lookup by entity ID | analytical SQL / point-in-time scans |
+| Used by | `feature_service/` (Phase 3) | `batch_features/` (Phase 1), `ranking/train.py` (Phase 4) |
+| Runs as | a `docker-compose.yml` container | an embedded library, no container |
 
 ## CI/CD
 
