@@ -30,6 +30,34 @@ apply across every phase.
 - **Testing hierarchy:** unit tests per component; integration tests in `tests/`; failure-mode tests (dependency down → correct fallback fires AND is logged) are first-class and required where specified.
 - **Explicitly out of scope** (do not build, note in README where relevant): exactly-once semantics, consensus/multi-region, Kubernetes, real auction theory (second-price mechanics beyond the basics), attribution modeling, real OpenRTB protocol compliance.
 
+## Why Polars, not pandas
+
+"Polars for transforms" is a locked Phase 0 decision (`phases.md`); the
+reasoning, for when it's not obvious why a given transform is written in
+Polars idioms rather than pandas:
+
+- **Performance/memory**, mainly from being Rust-based on top of Apache
+  Arrow's columnar memory format, vs. pandas' older NumPy-block internals —
+  matters for the windowed aggregations `batch_features/` (Phase 1)
+  computes over parquet-partitioned history (e.g. `user_ctr_by_category_30d`).
+- **Lazy evaluation** (`pl.scan_parquet(...).filter(...).group_by(...).collect()`)
+  — Polars builds and optimizes a query plan (predicate/projection
+  pushdown) before touching data; pandas is eager only. This is what makes
+  the point-in-time reads Phase 1/4 need (filter to a date range before
+  materializing anything) cheap.
+- **Native Arrow/Parquet interop.** `datagen/`, `batch_features/`, and
+  DuckDB all read/write Parquet — staying in the Arrow ecosystem avoids
+  conversion overhead and the dtype surprises pandas' non-Arrow default
+  dtypes can introduce.
+- **Real nullable types throughout**, vs. pandas' historical looseness
+  around `NaN`/`None`/`dtype=object` for nullable ints and strings — this
+  project leans on explicit nullability rules (e.g. `campaigns.parquet`'s
+  `bid`/`budget`/`impression_goal`, `events.parquet`'s `click_id`), where
+  that looseness would be a real bug source.
+- **Clean interop with DuckDB** (see "DynamoDB vs. DuckDB" below) — both
+  are Arrow-native, so `batch_features/` and `ranking/train.py` can move
+  data between Polars transforms and DuckDB SQL cheaply.
+
 ## Docker Compose services
 
 Three infra containers, brought up by `make up` (`docker-compose.yml`).
