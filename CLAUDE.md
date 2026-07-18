@@ -149,6 +149,48 @@ materialized into DynamoDB-local (queried via point lookup) for serving.
 | Used by | `feature_service/` (Phase 3) | `batch_features/` (Phase 1), `ranking/train.py` (Phase 4) |
 | Runs as | a `docker-compose.yml` container | an embedded library, no container |
 
+## Real-time state vs. long-term aggregates — why separate stores
+
+A recurring question when adding a new signal: does it belong in the
+real-time path (Redis, TTL'd) or the batch path (Parquet/DuckDB offline →
+DynamoDB-local online)? The two have fundamentally different requirements,
+which is why production systems — and this project — split them rather
+than using one store for both:
+
+| | Immediate/real-time state | Long-term/historical aggregate |
+|---|---|---|
+| Freshness need | seconds | hours (daily batch is often fine) |
+| Write pattern | continuous stream of small per-event writes | periodic bulk recompute/upsert over a window |
+| Read pattern | point lookup, "give me the current value" | point lookup for serving, but *computed* via range/aggregation queries |
+| Durability | ephemeral — should expire (TTL) when no longer relevant | must persist; often needs point-in-time query ("as of date D") |
+| Failure blast radius | a lagging pipeline should degrade gracefully, not take serving down | independent pipeline, independent failure mode |
+
+This project ends up with three tiers, not two, because "online" splits
+further by latency need:
+1. **Offline analytical store** (Parquet + DuckDB) — the historical
+   record, point-in-time queryable, used for training (Phase 4).
+2. **Online durable store** (DynamoDB-local) — the latest *materialized*
+   value of batch-computed features, one point lookup away (Phase 1→3).
+3. **Online real-time cache** (Redis, TTL'd) — "what's happening right
+   now," written continuously as events arrive (Phase 2→3).
+
+This split is what makes graceful degradation possible: Phase 5's
+degradation ladder treats "real-time features stale/missing → fall back to
+batch-only" as a first-class failure mode specifically *because* the two
+paths are decoupled. If one store served both, a stream-processing outage
+would take the whole feature down instead of quietly aging out only the
+real-time-only piece.
+
+**Concrete precedent — `user_rides_per_week`:** this Phase 1 feature is a
+rolling aggregate over time, not a point-in-time signal, so it's a *batch*
+concept by definition, computed from `rides.parquet` (added to `datagen/`
+during Phase 1 planning — see `PROGRESS.md`'s Phase 0 entry for why this
+counts as a flagged amendment to an already-tagged phase). A hypothetical
+future "user is currently on a ride" feature would be a *different,
+real-time* feature via `stream_features/` → Redis (Phase 2's territory),
+not an alternate implementation of the same signal — the two aren't
+interchangeable just because they're both "about rides."
+
 ## Makefile targets
 
 `up`/`down` manage infra containers, `test` proves correctness, `demo`/`eda`
