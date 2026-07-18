@@ -18,6 +18,20 @@ edits here), validates each job's output columns against `outputs()` and
 the registry, joins per-entity outputs into one wide frame, and writes
 `data/features/entity=<user|ad>/asof=<date>/features.parquet`.
 
+**Offline store point-in-time reads** (`offline_store.py`): each
+`asof=<date>` partition is a complete, self-consistent snapshot computed
+using only data through that date (enforced by `jobs/_shared.py`'s
+trailing-window filtering) — so a point-in-time read for date D is "find
+the most recent partition with asof <= D, return it whole," no
+cross-partition merging needed. `available_partitions()` and
+`query_as_of()` do this via DuckDB SQL over the partitioned Parquet
+directory (hive-partition discovery, `read_parquet(..., hive_partitioning=true)`)
+— this is what "queried via DuckDB" means for this offline store, distinct
+from the point-in-time correctness *within* a single partition, which the
+jobs themselves guarantee at compute time. (Note: `"asof"` must be
+double-quoted in DuckDB SQL — it collides with DuckDB's `ASOF JOIN`
+keyword.)
+
 Currently implemented jobs (all 9 registry features): `user_ctr_by_category_30d`,
 `user_ctr_30d`, `user_impressions_7d`, `user_rides_per_week`, `ad_ctr_7d`,
 `ad_ctr_30d`, `ad_impressions_7d`, `campaign_spend_yesterday`, and
