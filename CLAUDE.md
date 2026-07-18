@@ -58,6 +58,39 @@ Polars idioms rather than pandas:
   are Arrow-native, so `batch_features/` and `ranking/train.py` can move
   data between Polars transforms and DuckDB SQL cheaply.
 
+**Coming from pandas.** Concepts transfer (still rows/typed columns,
+filter/group/join/sort as the core verbs, `.head()`/`.shape`/Parquet I/O
+feel the same), but expect some syntax relearning: no `.loc`/`.iloc`/boolean
+`df[mask]` indexing — everything goes through `.filter(pl.col(...) == ...)`
+expressions; no index at all (no `.reset_index()`, no index-alignment
+footguns); method chaining is the idiom, not a style choice (see
+`adserver/datagen/eda.py::_ctr_pivot` for a real example); `.group_by().agg()`
+takes expressions, not string names or a dict of lists; lazy (`pl.scan_parquet`
++ `.collect()`) vs. eager (`pl.read_parquet`) is an explicit choice, not
+automatic; nulls are always `None`, never a silent int→float `NaN` upcast;
+`.pivot()` takes `on=`/`index=`/`values=` rather than pandas' argument names.
+
+**Downsides, for balance:** smaller ecosystem (some libraries — plotting,
+older stats/finance packages — still expect pandas or NumPy, requiring an
+explicit `.to_numpy()`/`.to_pandas()` at that boundary); less
+Stack-Overflow/tutorial coverage than pandas' ~15-year head start; a less
+stable API history (real breaking changes across versions, e.g.
+`groupby`→`group_by`, `pivot`'s renamed args — pin versions carefully, which
+`uv.lock` already does); no index-based auto-alignment (occasionally more
+verbose, though more predictable); smaller pool of pandas-only scientific
+extensions.
+
+**Modeling interop (Phase 4 concern, resolved):** not expected to be a real
+issue. The model artifact contract's `predict(feature_dict) -> float` means
+no DataFrame exists at serving time at all — the only DataFrame-to-modeling
+boundary is inside `train.py` building the training matrix, and neither
+`scikit-learn` nor `xgboost`'s sklearn API requires pandas; both fit
+directly on `polars_df.to_numpy()`. If a library genuinely needs pandas
+(e.g. some explainability/plotting tooling expecting pandas `Categorical`
+dtype or column-name-aware output), `polars_df.to_pandas()` is a fast
+Arrow-backed bridge, not a slow re-serialization — an occasional one-line
+escape hatch at one boundary, not a recurring tax through the codebase.
+
 ## Docker Compose services
 
 Three infra containers, brought up by `make up` (`docker-compose.yml`).
