@@ -17,6 +17,7 @@ from pathlib import Path
 import polars as pl
 
 from adserver.batch_features import jobs as jobs_pkg
+from adserver.batch_features import materialize as materialize_module
 from adserver.batch_features import quality
 from adserver.batch_features.framework import DEFAULT_DATA_DIR, FeatureJob
 from adserver.common.registry import FeatureDef, load_registry
@@ -73,20 +74,25 @@ def run(
     registry_path: Path = DEFAULT_REGISTRY_PATH,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     jobs: list[FeatureJob] | None = None,
+    materialize_to_dynamo: bool = False,
 ) -> dict[str, pl.DataFrame]:
-    """Run all discovered jobs, validate, and write offline Parquet output.
+    """Run all discovered jobs, validate, quality-gate, and write offline
+    Parquet output. Set `materialize_to_dynamo=True` to also write each
+    job's output to DynamoDB-local (requires `make up`) — off by default
+    so this function stays usable without infra (tests, other jobs).
 
     `jobs` defaults to auto-discovery; pass explicitly only for testing
     (e.g. injecting a job that should fail the quality gate).
 
-    Returns {entity: combined_frame} for the caller (materialization,
-    quality gate) to use without re-reading from disk.
+    Returns {entity: combined_frame} for the caller to use without
+    re-reading from disk.
     """
     registry = load_registry(registry_path)
     all_jobs = jobs if jobs is not None else discover_jobs()
 
     by_entity: dict[str, list[pl.DataFrame]] = {"user": [], "ad": []}
     id_col_by_entity = {"user": "user_id", "ad": "campaign_id"}
+    computed_at = dt.datetime.now(dt.timezone.utc)
 
     for job in all_jobs:
         df = job.compute(as_of, data_dir)
@@ -94,6 +100,9 @@ def run(
         expected_count = job.expected_entity_count(as_of, data_dir)
         quality.check(df, expected_count, job.outputs(), type(job).__name__)
         by_entity[job.entity()].append(df)
+
+        if materialize_to_dynamo:
+            materialize_module.materialize(job.entity(), df, job.outputs(), computed_at)
 
     combined: dict[str, pl.DataFrame] = {}
     for entity, frames in by_entity.items():

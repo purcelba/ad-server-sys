@@ -1,4 +1,4 @@
-.PHONY: up down test demo eda reach
+.PHONY: up down test demo eda reach features
 
 up:
 	docker compose up -d
@@ -29,3 +29,6 @@ eda: demo
 
 reach: demo
 	uv run python -m adserver.batch_features.reach
+
+features: demo
+	uv run python -m adserver.batch_features.cli

@@ -47,16 +47,34 @@ would make the gate fire on entirely correct output (verified directly:
 22/40 campaigns get impressions in a given 7-day window, but that's 22/22
 of the campaigns actually eligible in that window).
 
-(Materialization to DynamoDB-local is planned for this package within
-Phase 1; not yet present as of this commit.)
+**Materialization** (`materialize.py`): writes each job's output to
+DynamoDB-local — the durable *online* feature store (see CLAUDE.md's
+"Real-time state vs. long-term aggregates"). Single-table design: PK
+`entity_key` (e.g. `user#u_0001`), SK `feature_name`, attributes `value`
+(native DynamoDB type per dtype — number, string, map, or list) +
+`computed_at`. `create_table_if_not_exists()` runs at the start of every
+materializing call, since `dynamodb-local` runs `-inMemory` and the table
+doesn't survive a container restart. Only writes values a job actually
+computed — an entity a job produced no row for stays absent (`missing`,
+resolved to the registry default at read time in Phase 3), never written
+as a fabricated zero/null.
+
+`runner.run(..., materialize_to_dynamo=True)` opt-in flag (default
+`False`, so the runner stays usable without infra for tests and other
+jobs) wires quality-gated job output straight into DynamoDB-local, one job
+at a time, right after that job's gate passes.
+
+`make features` (`cli.py`): runs everything — all jobs, validation,
+quality gate, offline Parquet, and materialization — for the synthetic
+history's "today" (`HISTORY_END`). Requires `make up` first.
 
 ## How to run and test it alone
 ```bash
 uv run pytest adserver/batch_features -v
 ```
-No infra dependency for the jobs/runner themselves — pure Python + Polars
-over the `datagen/`-generated parquet files. (Materialization, once added,
-will need `dynamodb-local` up via `make up`.)
+Most tests need no infra — pure Python + Polars over the
+`datagen/`-generated parquet files. `tests/test_materialize.py` needs
+`dynamodb-local` up (`make up`) and self-skips cleanly without it.
 
 ## Production analog
 This is the local, file-based stand-in for a production batch feature
