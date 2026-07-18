@@ -55,31 +55,47 @@ future phase's README claims otherwise, that's a spec deviation — flag it.
 
 ## Data schemas
 
-The Phase 0 synthetic catalog (`datagen/`) produces two entity tables.
-Later phases only ever *add* columns/files (e.g. Phase 1's
-`audience_memberships`) — they don't redefine these.
+The Phase 0 synthetic catalog (`datagen/`) produces three entity/event
+tables, all locked as of the `phase-0` tag. Later phases only ever *add*
+columns/files (e.g. Phase 1's `audience_memberships`) — they don't redefine
+these. Full generation details (segment counts, campaign ranges, lift
+table) live in `adserver/datagen/README.md`; this is the column contract.
 
 ### `users.parquet`
 | column | type | notes |
 |---|---|---|
 | `user_id` | str | unique, e.g. `u_0001` |
-| `segment` | str (enum) | primary behavioral segment — exact set + planted lift factors defined in `datagen/README.md` (Phase 0 AC #3); examples from the spec: `commuter`, `traveler`, `nightlife` |
-| `home_metro` | str | synthetic geo bucket, used for targeting/geo features |
-| `created_at` | date | account creation date, within the 30-day synthetic history window |
+| `segment` | str (enum) | one of `commuter`, `traveler`, `nightlife`, `foodie`, `shopper`, `homebody`, `general` — `homebody` (suppressed engagement) and `general` (no lift) are deliberate control groups; planted lift factors defined in `datagen/lifts.py` / rendered in `datagen/README.md` (Phase 0 AC #3) |
+| `home_metro` | str | one of `san_francisco`, `new_york`, `chicago`, `austin`, `seattle` |
+| `created_at` | date | account creation date, within the synthetic history window |
 
 ### `campaigns.parquet` (ads)
 | column | type | notes |
 |---|---|---|
 | `campaign_id` | str | unique, e.g. `c_0001` |
 | `advertiser_name` | str | synthetic advertiser label |
-| `category` | str (enum) | one of `food`, `retail`, `entertainment`, `travel`, `transit` (per spec Phase 0) |
+| `category` | str (enum) | one of `food`, `retail`, `entertainment`, `travel`, `transit` |
 | `demand_type` | str (enum) | `auction` \| `guaranteed` |
-| `bid` | float, nullable | set only when `demand_type == auction` |
-| `budget` | float, nullable | set only when `demand_type == auction` |
-| `impression_goal` | int, nullable | set only when `demand_type == guaranteed` |
+| `bid` | float, nullable | non-null iff `demand_type == auction`; $0.50–$5.00 |
+| `budget` | float, nullable | non-null iff `demand_type == auction`; $200–$2,000 |
+| `impression_goal` | int, nullable | non-null iff `demand_type == guaranteed`; 500–5,000 |
 | `flight_start` | date | required for both demand types |
 | `flight_end` | date | required for both demand types |
 | `status` | str (enum) | `active` \| `paused` \| `ended` |
+
+### `events.parquet` (impressions/clicks)
+| column | type | notes |
+|---|---|---|
+| `event_id` | str | unique, e.g. `e_00000001` |
+| `event_type` | str (enum) | `impression` \| `click` |
+| `user_id` | str | FK → users |
+| `campaign_id` | str | FK → campaigns |
+| `category` | str | denormalized from campaign at generation time — avoids joins in downstream feature jobs |
+| `segment` | str | denormalized from user, same reason |
+| `ts` | datetime (us) | event timestamp within the history window |
+| `event_date` | date | derived from `ts` |
+| `hour_of_day` | int 0–23 | denormalized from `ts` |
+| `click_id` | str, nullable | for click rows only, FK → the impression's `event_id`; null on impression rows |
 
 `audience_memberships` (on users) and audience *targeting* (on campaigns)
 are Phase 1 additions (`audiences.yaml`) — not part of the Phase 0 catalog.
