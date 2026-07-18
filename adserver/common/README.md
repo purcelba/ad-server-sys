@@ -10,12 +10,22 @@ and raises a clear error naming the offending feature/field on any
 malformed entry (missing field, invalid entity/dtype, unparseable
 freshness SLA, duplicate name).
 
+Also: named, versioned audiences (`audiences.yaml` + `audiences.py`) —
+sellable segments defined as ANDed rules (`feature`/`op`/`value` triples)
+over registry features, e.g. `frequent_airport_travelers` = segment ==
+traveler AND user_ctr_by_category_30d.travel >= 0.05. Same governance
+pattern as the registry: `load_audiences()` validates required fields, a
+valid comparison op, and no duplicate names, raising a clear error naming
+the offender. Changing a definition must bump `definition_version` —
+`batch_features/jobs/audiences.py` logs every audience's version on every
+run (`data/audience_versions.log`), so membership drift under an unchanged
+name is always visible.
+
 Per `CLAUDE.md`, this is the *only* code other components may import
 across component boundaries — everything else communicates via HTTP, the
 event stream, or the online store.
 
-(`audiences.yaml` — named audiences as rules over registry features — and
-shared metrics helpers are also planned for this package within Phase 1;
+(Shared metrics helpers are also planned for this package within Phase 1;
 not yet present as of this commit.)
 
 ## How to run and test it alone

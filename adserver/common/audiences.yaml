@@ -1,0 +1,26 @@
+# Named, versioned audiences — sellable segments defined as rules over
+# registry features. See common/audiences.py for the loader/validator and
+# batch_features/jobs/audiences.py for evaluation. Changing a definition
+# must bump definition_version — memberships silently drifting under an
+# unchanged name is the advertiser-trust failure this guards against.
+
+audiences:
+  - name: frequent_airport_travelers
+    definition_version: 1
+    rules:
+      - feature: segment
+        op: eq
+        value: traveler
+      - feature: user_ctr_by_category_30d.travel
+        op: gte
+        value: 0.05
+
+  - name: weekday_commuters
+    definition_version: 1
+    rules:
+      - feature: segment
+        op: eq
+        value: commuter
+      - feature: user_rides_per_week
+        op: gte
+        value: 5

@@ -18,12 +18,17 @@ edits here), validates each job's output columns against `outputs()` and
 the registry, joins per-entity outputs into one wide frame, and writes
 `data/features/entity=<user|ad>/asof=<date>/features.parquet`.
 
-Currently implemented jobs (8 of the registry's 9 features —
-`audience_memberships` lands in a later step): `user_ctr_by_category_30d`,
+Currently implemented jobs (all 9 registry features): `user_ctr_by_category_30d`,
 `user_ctr_30d`, `user_impressions_7d`, `user_rides_per_week`, `ad_ctr_7d`,
-`ad_ctr_30d`, `ad_impressions_7d`, `campaign_spend_yesterday`. Shared pure
-computation helpers (window filtering, CTR, impression counts, spend) live
-in `jobs/_shared.py` so logic isn't duplicated across jobs.
+`ad_ctr_30d`, `ad_impressions_7d`, `campaign_spend_yesterday`, and
+`audience_memberships` (`jobs/audiences.py` — evaluates `common/audiences.yaml`
+rules against the same shared helpers the other jobs use, self-contained
+like every other job, not dependent on their output or run order). Shared
+pure computation helpers (window filtering, CTR, impression counts, spend)
+live in `jobs/_shared.py` so logic isn't duplicated across jobs.
+
+**Reach report** (`reach.py`, `make reach`): member counts and pairwise
+overlap per audience — "how many riders would this campaign reach?"
 
 **Data-quality gate** (`quality.py`): the runner calls `check()` on every
 job's output before it's eligible for materialization — a single failure

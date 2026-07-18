@@ -1,4 +1,4 @@
-.PHONY: up down test demo eda
+.PHONY: up down test demo eda reach
 
 up:
 	docker compose up -d
@@ -26,3 +26,6 @@ demo:
 eda: demo
 	uv run python -m adserver.datagen.eda --data-dir data/ --out data/eda/
 	@echo "Wrote EDA plots to data/eda/"
+
+reach: demo
+	uv run python -m adserver.batch_features.reach
