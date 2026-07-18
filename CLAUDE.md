@@ -30,6 +30,29 @@ apply across every phase.
 - **Testing hierarchy:** unit tests per component; integration tests in `tests/`; failure-mode tests (dependency down → correct fallback fires AND is logged) are first-class and required where specified.
 - **Explicitly out of scope** (do not build, note in README where relevant): exactly-once semantics, consensus/multi-region, Kubernetes, real auction theory (second-price mechanics beyond the basics), attribution modeling, real OpenRTB protocol compliance.
 
+## CI/CD
+
+**CI:** `.github/workflows/ci.yml` runs on every push and PR. It installs
+`uv`, runs `uv sync`, brings up the full Docker Compose infra (`make up`),
+runs the whole test suite against it (`make test`), then tears infra down
+(`make down`, `if: always()` so it runs even on failure). There's no
+separate lint/build/typecheck job — `make test` is the single gate, kept
+that way deliberately so "CI passing" and "the acceptance criteria pass"
+mean the same thing.
+
+Pushing `.github/workflows/*` requires a GitHub token with the `workflow`
+OAuth scope (stricter than plain `repo`, since workflow files can execute
+code with repo permissions on GitHub's infrastructure) — if a push is
+rejected for this reason, the fix is `gh auth refresh -h github.com -s
+workflow`, which needs the user to approve a device-code prompt in their
+browser; Claude Code cannot approve this step on the user's behalf.
+
+**CD:** none. This project has no automated deployment — it's local-scale
+by design (`docker compose` + local Python processes), and Phase 8's
+optional AWS slice is explicitly a manual, one-off exercise (`make
+aws-down` is a manual teardown script, not part of any pipeline). If a
+future phase's README claims otherwise, that's a spec deviation — flag it.
+
 ## Data schemas
 
 The Phase 0 synthetic catalog (`datagen/`) produces two entity tables.
