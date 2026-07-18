@@ -30,6 +30,43 @@ apply across every phase.
 - **Testing hierarchy:** unit tests per component; integration tests in `tests/`; failure-mode tests (dependency down → correct fallback fires AND is logged) are first-class and required where specified.
 - **Explicitly out of scope** (do not build, note in README where relevant): exactly-once semantics, consensus/multi-region, Kubernetes, real auction theory (second-price mechanics beyond the basics), attribution modeling, real OpenRTB protocol compliance.
 
+## Docker Compose services
+
+Three infra containers, brought up by `make up` (`docker-compose.yml`).
+Everything else in the project is a plain Python process — no Kubernetes,
+no managed cloud services, per the "explicitly out of scope" list above.
+Versions are pinned (not `latest`), consistent with the project's
+determinism/reproducibility ethos.
+
+- **`redpanda`** (`docker.redpanda.com/redpandadata/redpanda:v24.2.4`) — the
+  event broker. Speaks the Kafka wire protocol, so `stream_features/`
+  (Phase 2) can use a standard Kafka client without running actual Kafka +
+  ZooKeeper. Chosen over real Kafka specifically for local ops simplicity:
+  it's a single binary/container with no separate coordination service,
+  while still being protocol-compatible enough that the concepts (event
+  time vs. processing time, consumer lag, at-least-once delivery) transfer
+  directly. *Production analog:* Kinesis (or Kafka) + Flink — this project
+  intentionally uses a plain Python consumer instead of Flink, documented
+  as a locked decision in `phases.md` Phase 2.
+- **`dynamodb-local`** (`amazon/dynamodb-local:2.5.4`) — the durable
+  *offline* feature store (store of record). Batch-computed features
+  (Phase 1) get materialized here with `computed_at` timestamps; the
+  feature service (Phase 3) falls back to it when Redis misses. Chosen
+  because it's the actual DynamoDB API running locally — no emulation gap
+  between local dev and Phase 8's optional real-AWS slice, which points
+  the same code at a real DynamoDB table. *Production analog:* DynamoDB
+  itself.
+- **`redis`** (`redis:7.4-alpine`) — the *online*, low-latency feature
+  cache and, later, pacing/delivery counters (Phase 5). Real-time features
+  from `stream_features/` (Phase 2) are written here with TTLs matching
+  each feature's freshness SLA; the feature service reads Redis first. A
+  small, well-understood in-memory store fits the sub-10ms p99 target
+  (Phase 3 AC4) and the sub-100ms serving SLO (Phase 5) without needing a
+  heavier caching layer. *Production analog:* Redis (or an equivalent
+  in-memory store) fronting a feature store — this is a case where the
+  local stand-in and the production component are literally the same
+  technology.
+
 ## CI/CD
 
 **CI:** `.github/workflows/ci.yml` runs on every push and PR. It installs
