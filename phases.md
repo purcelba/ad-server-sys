@@ -50,6 +50,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 - [ ] 1. `make up` brings up all infra containers healthy.
 - [ ] 2. `datagen` produces users.parquet, campaigns.parquet, events.parquet deterministically (same seed → identical files).
 - [ ] 3. A written table in the README of planted effects (segment × category lift factors).
+- [ ] 4. EDA visualizations generated from datagen output: CTR by (user segment × campaign category), and CTR by (user segment × time of day) — both saved as PNGs and visually consistent with the planted lift table.
 
 ---
 
