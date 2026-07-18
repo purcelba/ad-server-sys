@@ -67,7 +67,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 - [x] **Audiences (sellable segments):** an `audiences.yaml` defining named audiences (e.g. `frequent_airport_travelers`, `weekday_commuters`) as rules over user features, each carrying a `definition_version`. A batch job (implementing the standard feature-job interface) evaluates definitions and materializes memberships as a user feature (`audience_memberships: list[str]`). Changing a definition bumps its version and is logged — memberships silently drifting under an unchanged name is the advertiser-trust failure this prevents. A small reach report (`make reach`) prints member counts and pairwise overlap per audience from the offline store — the "how many riders would this campaign reach?" question a sales team asks before selling.
 
 **Acceptance criteria:**
-- [ ] 1. `make features` computes and materializes all registry features; re-running is idempotent.
+- [x] 1. `make features` computes and materializes all registry features; re-running is idempotent.
 - [ ] 2. Point-in-time test: querying features "as of" day 15 returns values computed only from days 1–15.
 - [ ] 3. Poisoning test: corrupt a day's events (inject 50% nulls) → pipeline fails at the quality gate and does NOT materialize.
 - [ ] 4. Every materialized item carries computed_at; nothing outside the registry gets materialized.
