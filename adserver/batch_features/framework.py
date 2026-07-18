@@ -39,3 +39,15 @@ class FeatureJob(ABC):
 
     def entity_id_column(self) -> str:
         return "user_id" if self.entity() == "user" else "campaign_id"
+
+    def expected_entity_count(self, as_of: dt.date, data_dir: Path = DEFAULT_DATA_DIR) -> int:
+        """Row-count quality-gate denominator: how many entities this job
+        could plausibly cover. Default = full catalog size (correct for
+        most jobs, given this project's data volume). Jobs whose coverage
+        is legitimately partial — e.g. ad-level windowed features, where a
+        campaign outside its flight has no data by design, not by
+        failure — must override this with a narrower, still-meaningful
+        population (see jobs/ad_ctr.py, jobs/ad_impressions.py).
+        """
+        filename = "users.parquet" if self.entity() == "user" else "campaigns.parquet"
+        return pl.read_parquet(data_dir / filename).height

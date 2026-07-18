@@ -8,7 +8,12 @@ from pathlib import Path
 import polars as pl
 
 from adserver.batch_features.framework import DEFAULT_DATA_DIR, FeatureJob
-from adserver.batch_features.jobs._shared import impressions_count, load_events
+from adserver.batch_features.jobs._shared import (
+    eligible_campaigns_count,
+    impressions_count,
+    load_campaigns,
+    load_events,
+)
 
 WINDOW_DAYS = 7
 
@@ -26,3 +31,7 @@ class AdImpressionsJob(FeatureJob):
         return out.select(
             ["campaign_id", pl.col("impressions").cast(pl.Int64).alias("ad_impressions_7d")]
         )
+
+    def expected_entity_count(self, as_of: dt.date, data_dir: Path = DEFAULT_DATA_DIR) -> int:
+        campaigns = load_campaigns(data_dir)
+        return eligible_campaigns_count(campaigns, as_of, WINDOW_DAYS)

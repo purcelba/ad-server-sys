@@ -36,6 +36,24 @@ def load_campaigns(data_dir: Path = DEFAULT_DATA_DIR) -> pl.DataFrame:
     return pl.read_parquet(data_dir / "campaigns.parquet")
 
 
+def eligible_campaigns_count(campaigns: pl.DataFrame, as_of: dt.date, window_days: int) -> int:
+    """Count of campaigns that could plausibly have data in the trailing
+    window: status == 'active' and flight overlaps [window_start, as_of].
+
+    Used as the row-count quality-gate denominator for ad-level windowed
+    features — campaigns outside their flight or paused/ended have no
+    impressions by design, not by data-quality failure, so they must not
+    count against coverage.
+    """
+    start, end = trailing_window(as_of, window_days)
+    eligible = campaigns.filter(
+        (pl.col("status") == "active")
+        & (pl.col("flight_start") <= end)
+        & (pl.col("flight_end") >= start)
+    )
+    return eligible.height
+
+
 def _events_in_window(events: pl.DataFrame, as_of: dt.date, window_days: int) -> pl.DataFrame:
     start, end = trailing_window(as_of, window_days)
     return events.filter((pl.col("event_date") >= start) & (pl.col("event_date") <= end))

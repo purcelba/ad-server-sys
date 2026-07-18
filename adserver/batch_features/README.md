@@ -25,8 +25,25 @@ Currently implemented jobs (8 of the registry's 9 features —
 computation helpers (window filtering, CTR, impression counts, spend) live
 in `jobs/_shared.py` so logic isn't duplicated across jobs.
 
-(Data-quality gate and materialization to DynamoDB-local are planned for
-this package within Phase 1; not yet present as of this commit.)
+**Data-quality gate** (`quality.py`): the runner calls `check()` on every
+job's output before it's eligible for materialization — a single failure
+raises `QualityGateError` and aborts the whole run before anything is
+written (no partial output). Two checks: (1) row-count — fewer than 80% of
+the job's *expected entity population* represented; (2) null-rate — more
+than 5% of a feature column's values are null. The row-count denominator
+is job-specific, not always "every entity in the catalog":
+`FeatureJob.expected_entity_count()` defaults to the full catalog (correct
+for user-level jobs, given this project's data volume gives near-universal
+weekly coverage), but ad-level windowed jobs (`ad_ctr_7d`/`30d`,
+`ad_impressions_7d`) override it to count only campaigns whose flight is
+`active` and overlaps the window — a campaign outside its flight has no
+impressions *by design*, not by data corruption, and conflating the two
+would make the gate fire on entirely correct output (verified directly:
+22/40 campaigns get impressions in a given 7-day window, but that's 22/22
+of the campaigns actually eligible in that window).
+
+(Materialization to DynamoDB-local is planned for this package within
+Phase 1; not yet present as of this commit.)
 
 ## How to run and test it alone
 ```bash

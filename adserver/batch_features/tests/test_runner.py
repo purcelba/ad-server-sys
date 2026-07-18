@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 
 from adserver.batch_features.framework import FeatureJob
+from adserver.batch_features.quality import QualityGateError
 from adserver.batch_features.runner import (
     DEFAULT_REGISTRY_PATH,
     RunnerError,
@@ -104,3 +105,27 @@ def test_validate_output_raises_on_unregistered_feature():
     df = job.compute(AS_OF)
     with pytest.raises(RunnerError, match="not_a_real_feature"):
         _validate_output(job, df, registry)
+
+
+class _SparseButValidJob(FeatureJob):
+    """Correct columns, registered feature - but only 1/50 users
+    represented, well below the row-count gate's 80% threshold. Simulates
+    what a poisoned upstream events.parquet would look like downstream."""
+
+    def entity(self) -> str:
+        return "user"
+
+    def outputs(self) -> list[str]:
+        return ["user_ctr_30d"]
+
+    def compute(self, as_of, data_dir=Path("data")) -> pl.DataFrame:
+        return pl.DataFrame({"user_id": ["u_0001"], "user_ctr_30d": [0.05]})
+
+
+def test_run_blocks_materialization_when_a_job_fails_the_quality_gate(tmp_path):
+    output_dir = tmp_path / "features"
+    with pytest.raises(QualityGateError, match="row-count"):
+        run(as_of=AS_OF, output_dir=output_dir, jobs=[_SparseButValidJob()])
+
+    # no partial write - the failure must happen before any output is written
+    assert not output_dir.exists()
