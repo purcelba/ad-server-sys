@@ -1,0 +1,97 @@
+# Feature registry — the governed contract every feature-producing job
+# (batch now, streaming from Phase 2) must honor. See common/registry.py
+# for the loader/validator and adserver/batch_features/README.md for how
+# these get computed and materialized.
+
+features:
+  - name: user_ctr_by_category_30d
+    entity: user
+    dtype: map[str,float]
+    description: Per-category click-through rate over the trailing 30 days.
+    aggregation: ctr
+    window: 30d
+    freshness_sla: 24h
+    default: {}
+    owner: ads-ml
+
+  - name: user_rides_per_week
+    entity: user
+    dtype: float
+    description: Ride count in the trailing 7 days, from rides.parquet.
+    aggregation: count
+    window: 7d
+    freshness_sla: 24h
+    default: 0.0
+    owner: ads-ml
+
+  - name: user_ctr_30d
+    entity: user
+    dtype: float
+    description: Overall click-through rate over the trailing 30 days, across all categories.
+    aggregation: ctr
+    window: 30d
+    freshness_sla: 24h
+    default: 0.0
+    owner: ads-ml
+
+  - name: user_impressions_7d
+    entity: user
+    dtype: int
+    description: Ad impression count in the trailing 7 days — engagement volume.
+    aggregation: count
+    window: 7d
+    freshness_sla: 24h
+    default: 0
+    owner: ads-ml
+
+  - name: ad_ctr_7d
+    entity: ad
+    dtype: float
+    description: Click-through rate over the trailing 7 days for this campaign.
+    aggregation: ctr
+    window: 7d
+    freshness_sla: 24h
+    default: 0.0
+    owner: ads-ml
+
+  - name: ad_ctr_30d
+    entity: ad
+    dtype: float
+    description: Click-through rate over the trailing 30 days for this campaign.
+    aggregation: ctr
+    window: 30d
+    freshness_sla: 24h
+    default: 0.0
+    owner: ads-ml
+
+  - name: ad_impressions_7d
+    entity: ad
+    dtype: int
+    description: Impression count in the trailing 7 days for this campaign.
+    aggregation: count
+    window: 7d
+    freshness_sla: 24h
+    default: 0
+    owner: ads-ml
+
+  - name: campaign_spend_yesterday
+    entity: ad
+    dtype: float
+    description: >-
+      Spend for the prior day. Auction campaigns: impressions x bid.
+      Guaranteed campaigns have no bid, so spend is always 0.0.
+    aggregation: sum
+    window: 1d
+    freshness_sla: 24h
+    default: 0.0
+    owner: ads-ml
+
+  - name: audience_memberships
+    entity: user
+    dtype: list[str]
+    description: Names of audiences (audiences.yaml) this user currently belongs to.
+    aggregation: membership
+    window: n/a
+    freshness_sla: 24h
+    default: []
+    owner: ads-ml
