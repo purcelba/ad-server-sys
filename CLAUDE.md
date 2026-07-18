@@ -88,6 +88,35 @@ materialized into DynamoDB-local (queried via point lookup) for serving.
 | Used by | `feature_service/` (Phase 3) | `batch_features/` (Phase 1), `ranking/train.py` (Phase 4) |
 | Runs as | a `docker-compose.yml` container | an embedded library, no container |
 
+## Makefile targets
+
+`up`/`down` manage infra containers, `test` proves correctness, `demo`/`eda`
+run the actual generator and show you what it produces. Only `eda` depends
+on another target (`demo`).
+
+- **`make up`** — `docker compose up -d`, then polls `docker compose ps`
+  every 2s (up to 60 tries) until all 3 services report `"Health":
+  "healthy"`, printing "All infra healthy." On timeout it prints an error
+  plus a `docker compose ps` dump and exits non-zero. Infra only — no
+  Python code runs. This is what `test_infra_healthy` (Phase 0 AC1) checks
+  against.
+- **`make down`** — `docker compose down -v`: stops containers and removes
+  volumes, a clean slate.
+- **`make test`** — `uv run pytest adserver/ -v`: runs the full test suite.
+  Doesn't bring infra up itself — if infra isn't running,
+  `test_infra_healthy` self-skips (checks `docker compose ps`, skips with a
+  message rather than failing) while every other test still runs. CI calls
+  `make up` first, then this.
+- **`make demo`** — runs the datagen CLI directly (`uv run python -m
+  adserver.datagen.cli --seed 42 --out data/`), generating
+  `users.parquet`/`campaigns.parquet`/`events.parquet` into `data/`, then
+  prints a `.head()` preview of each so output is eyeballable without
+  writing a script. No infra dependency, no tests.
+- **`make eda`** (depends on `demo`) — regenerates the data, then runs
+  `adserver/datagen/eda.py` to write the CTR heatmaps (segment × category,
+  segment × day/night bucket, plus the raw click-volume-by-hour
+  diagnostic) to `data/eda/`.
+
 ## CI/CD
 
 **CI:** `.github/workflows/ci.yml` runs on every push and PR. It installs
