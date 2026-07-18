@@ -11,7 +11,7 @@ from adserver.datagen.campaigns import active_campaigns_on
 from adserver.datagen.lifts import click_probability
 from adserver.datagen.users import HISTORY_END, HISTORY_START
 
-IMPRESSIONS_PER_USER_PER_DAY_MEAN = 10.0
+IMPRESSIONS_PER_USER_PER_DAY_MEAN = 18.0
 CLICK_DELAY_SECONDS_RANGE = (1, 120)
 
 
