@@ -7,13 +7,14 @@ test_phase0_acceptance.py's pattern. AC2 needs no infra.
 
 import datetime as dt
 import shutil
+import uuid
 
 import polars as pl
 import pytest
 
 from adserver.batch_features.jobs.ad_impressions import AdImpressionsJob
 from adserver.batch_features.jobs.user_ctr import UserCtrJob
-from adserver.batch_features.materialize import TABLE_NAME, get_resource
+from adserver.batch_features.materialize import MaterializeError, TABLE_NAME, get_resource, materialize as materialize_fn
 from adserver.batch_features.offline_store import query_as_of
 from adserver.batch_features.quality import QualityGateError
 from adserver.batch_features.runner import DEFAULT_REGISTRY_PATH, run
@@ -316,8 +317,6 @@ def test_ac3_sanity_uncorrupted_dataset_passes_the_gate(tmp_path):
 
 @requires_dynamo
 def test_ac3_poisoned_day_fails_quality_gate_and_does_not_materialize(tmp_path):
-    import uuid
-
     suffix = uuid.uuid4().hex[:8]
     data_dir = tmp_path / "data"
     c1, c2 = _write_poisoning_dataset(data_dir, corrupt=True, suffix=suffix)
@@ -346,3 +345,57 @@ def test_ac3_poisoned_day_fails_quality_gate_and_does_not_materialize(tmp_path):
     items = _scan_all_items()
     poisoned_keys = [i for i in items if i["entity_key"] in (f"ad#{c1}", f"ad#{c2}")]
     assert poisoned_keys == [], f"expected no materialized items for {c1}/{c2}, found: {poisoned_keys}"
+
+
+# --- AC4 ---
+# "Every materialized item carries computed_at; nothing outside the
+# registry gets materialized."
+#
+# Diagnosed while building this: materialize() previously trusted whatever
+# feature_names it was given - "nothing outside the registry" was only
+# true because runner.run() happened to validate first, not because
+# materialize() (the actual write boundary) enforced it itself. Fixed in
+# materialize.py: it now loads the registry and validates independently,
+# raising MaterializeError before writing anything. See PROGRESS.md.
+
+
+@requires_dynamo
+def test_ac4_every_item_has_computed_at_and_only_registry_features_are_materialized():
+    registry = load_registry(DEFAULT_REGISTRY_PATH)
+    registry_names = set(registry.keys())
+
+    run(as_of=HISTORY_END, materialize_to_dynamo=True)
+    items = _scan_all_items()
+    assert len(items) > 0, "materialization wrote nothing"
+
+    # every materialized item carries computed_at
+    missing_computed_at = [i for i in items if not i.get("computed_at")]
+    assert missing_computed_at == [], f"items missing computed_at: {missing_computed_at[:5]}"
+    for item in items:
+        dt.datetime.fromisoformat(item["computed_at"])  # raises if not a real timestamp
+
+    # nothing outside the registry gets materialized
+    materialized_names = {i["feature_name"] for i in items}
+    unregistered = materialized_names - registry_names
+    assert unregistered == set(), f"materialized features not in registry.yaml: {unregistered}"
+
+
+@requires_dynamo
+def test_ac4_materialize_enforces_the_registry_at_the_write_boundary():
+    """Direct proof the enforcement lives in materialize() itself, not
+    only in the runner's pre-check — matches the corresponding unit tests
+    in test_materialize.py, kept here too so this AC is self-contained.
+
+    Uses a per-invocation unique user_id (same reasoning as AC3's
+    poisoning test) so a run of this test can never collide with leftover
+    state from another run in the shared dynamodb-local table.
+    """
+    user_id = f"u_ac4_test_{uuid.uuid4().hex[:8]}"
+    df = pl.DataFrame({"user_id": [user_id], "not_a_real_feature": [1.0]})
+    computed_at = dt.datetime.now(dt.timezone.utc)
+    with pytest.raises(MaterializeError, match="not_a_real_feature"):
+        materialize_fn("user", df, ["not_a_real_feature"], computed_at)
+
+    items = _scan_all_items()
+    leaked = [i for i in items if i["entity_key"] == f"user#{user_id}"]
+    assert leaked == [], f"rejected feature was written anyway: {leaked}"

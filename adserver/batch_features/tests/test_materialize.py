@@ -92,3 +92,33 @@ def test_materialize_map_dtype_ad_entity(table_name):
     table = resource.Table(table_name)
     resp = table.get_item(Key={"entity_key": "ad#c_test_1", "feature_name": "ad_ctr_7d"})
     assert resp["Item"]["value"] == Decimal("0.03")
+
+
+@requires_dynamo
+def test_materialize_refuses_unregistered_feature(table_name):
+    df = pl.DataFrame({"user_id": ["u_test_3"], "not_a_real_feature": [1.0]})
+    computed_at = dt.datetime.now(dt.timezone.utc)
+    with pytest.raises(materialize.MaterializeError, match="not_a_real_feature"):
+        materialize.materialize("user", df, ["not_a_real_feature"], computed_at)
+
+    # nothing must have been written - validation happens before the table
+    # is even created, so create it now purely to make the verification
+    # query itself possible
+    materialize.create_table_if_not_exists()
+    resource = materialize.get_resource()
+    table = resource.Table(table_name)
+    resp = table.query(
+        KeyConditionExpression="entity_key = :ek",
+        ExpressionAttributeValues={":ek": "user#u_test_3"},
+    )
+    assert resp["Items"] == []
+
+
+@requires_dynamo
+def test_materialize_refuses_entity_mismatch(table_name):
+    """ad_ctr_7d is registered as entity=ad; materializing it under
+    entity='user' must be refused even though the feature name is real."""
+    df = pl.DataFrame({"user_id": ["u_test_4"], "ad_ctr_7d": [0.03]})
+    computed_at = dt.datetime.now(dt.timezone.utc)
+    with pytest.raises(materialize.MaterializeError, match="ad_ctr_7d"):
+        materialize.materialize("user", df, ["ad_ctr_7d"], computed_at)

@@ -11,15 +11,25 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
+from pathlib import Path
 
 import boto3
 import polars as pl
 
+from adserver.common.registry import FeatureDef, load_registry
+
 TABLE_NAME = "features"
 DYNAMODB_ENDPOINT = "http://localhost:8000"
+DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[1] / "common" / "registry.yaml"
 
 _ID_COL_BY_ENTITY = {"user": "user_id", "ad": "campaign_id"}
 _KEY_PREFIX_BY_ENTITY = {"user": "user", "ad": "ad"}
+
+
+class MaterializeError(ValueError):
+    """Raised when asked to materialize something the registry doesn't
+    declare — the write boundary to the online store enforces the
+    registry contract itself, not just trusting the caller already did."""
 
 
 def get_resource():
@@ -64,12 +74,28 @@ def _to_dynamo_value(value):
     return value
 
 
+def _validate_against_registry(
+    entity: str, feature_names: list[str], registry: dict[str, FeatureDef]
+) -> None:
+    for name in feature_names:
+        if name not in registry:
+            raise MaterializeError(
+                f"refusing to materialize {name!r} — not declared in registry.yaml"
+            )
+        if registry[name].entity != entity:
+            raise MaterializeError(
+                f"refusing to materialize {name!r} as entity {entity!r} — "
+                f"registry declares it as entity {registry[name].entity!r}"
+            )
+
+
 def materialize(
     entity: str,
     df: pl.DataFrame,
     feature_names: list[str],
     computed_at: dt.datetime,
     resource=None,
+    registry: dict[str, FeatureDef] | None = None,
 ) -> int:
     """Write every (entity, feature_name) pair in df to DynamoDB-local.
 
@@ -78,8 +104,18 @@ def materialize(
     resolved to the registry default at read time, per CLAUDE.md's
     defaults policy).
 
+    Every `feature_name` must be declared in the registry (defaults to the
+    real `registry.yaml` if `registry` isn't passed) — this is enforced
+    here, at the actual write boundary, not just assumed because the
+    caller (runner.run()) already validated. Raises MaterializeError
+    otherwise, before anything is written.
+
     Returns the number of items written.
     """
+    if registry is None:
+        registry = load_registry(DEFAULT_REGISTRY_PATH)
+    _validate_against_registry(entity, feature_names, registry)
+
     resource = resource or get_resource()
     create_table_if_not_exists(resource)
     table = resource.Table(TABLE_NAME)

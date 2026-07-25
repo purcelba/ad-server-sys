@@ -70,7 +70,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 - [x] 1. `make features` computes and materializes all registry features; re-running is idempotent.
 - [x] 2. Point-in-time test: querying features "as of" day 15 returns values computed only from days 1–15.
 - [x] 3. Poisoning test: corrupt a day's events (inject 50% nulls) → pipeline fails at the quality gate and does NOT materialize.
-- [ ] 4. Every materialized item carries computed_at; nothing outside the registry gets materialized.
+- [x] 4. Every materialized item carries computed_at; nothing outside the registry gets materialized.
 - [ ] 5. Extensibility proof: add a trivial new feature job (e.g. user_account_age_days) touching only its own module + registry entries — runner picks it up, quality gate applies, feature is served by Phase 3 with no other code changes. Keep this commit small as evidence the seam works.
 
 ---
