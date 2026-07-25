@@ -95,3 +95,13 @@ features:
     freshness_sla: 24h
     default: []
     owner: ads-ml
+
+  - name: user_account_age_days
+    entity: user
+    dtype: int
+    description: Days since account creation, as of the query date.
+    aggregation: none
+    window: n/a
+    freshness_sla: 24h
+    default: 0
+    owner: ads-ml
