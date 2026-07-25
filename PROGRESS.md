@@ -155,3 +155,95 @@ All 5 build items and all 5 acceptance criteria checked off in
 - Streaming feature compute (Phase 2) is expected to honor the same
   registry contract per the build item's extensibility framing, but
   nothing here builds toward that yet — out of scope until Phase 2.
+
+## Phase 2 — Real-time feature path (`phase-2`)
+
+**Built:** `common/events.py`'s `SessionEvent` (envelope + typed payload),
+shared verbatim by both producers and the consumer; `common/registry.yaml`
+gained 5 real-time features (`user_session_active`,
+`user_current_destination_category`, `user_current_ride_type`,
+`user_screens_viewed_10min`, and AC7's `promos_viewed_10min`), all
+`entity: user`, `freshness_sla` in seconds; `common/registry.py`'s
+`VALID_DTYPES` gained `bool`. `stream_features/framework.py`'s
+`EventHandler` interface (symmetric to Phase 1's `FeatureJob`) +
+`state.py`'s Redis-backed `SessionState` (sliding-window counts via a
+Redis sorted set, kept in Redis rather than consumer in-memory so it
+survives a restart) + 5 handlers (4 original event types + AC7's
+`promo_viewed`). `consumer.py`: `discover_handlers()` (auto-discovery,
+mirroring `batch_features/runner.py`), `process_event()` (dispatch,
+unknown-event handling, Redis writes — directly testable without a
+running consumer), `run_consume_loop()` (real `confluent-kafka` consumer
+on a background thread, at-least-once via default auto-commit), `/health`
++ `/metrics` via FastAPI/uvicorn. `datagen/replay.py` (the load/test
+harness — realistic session modeling, configurable rate, optional
+timestamp compression, `--unknown-event-rate` for injecting a novel
+type) and `ui/mini.html` + `ui/publish_api.py` (the precision instrument)
+— both publish the identical schema to the identical topic via
+`ensure_topic()`'s idempotent creation, provably indistinguishable to the
+consumer. All 5 build items and all 7 acceptance criteria checked off in
+`phases.md`. 120 tests, all passing against live infra.
+
+**New dependencies:** `confluent-kafka` (chosen over `kafka-python`: ~2x
+the PyPI download volume, prebuilt macOS arm64/py3.12 wheel confirmed, no
+source build needed), `redis`, `fastapi`, `uvicorn`, `httpx` (dev, for
+FastAPI's `TestClient`).
+
+**Decisions made (not previously locked in `CLAUDE.md`/`phases.md`):**
+- `ride_type_selected` gets a real handler (`user_current_ride_type`)
+  even though the build item's feature list didn't name one — the event
+  type is schema-documented, so it belongs in the handler registry rather
+  than falling into "unknown."
+- Every handler refreshes `user_session_active`, not just `session_start`
+  — any event means the session is still active; a session that only
+  ever fires `destination_entered`/`ride_type_selected`/`app_screen_view`
+  events (no explicit `session_start`, e.g. a client reconnect) still
+  reads as active.
+- Lag is defined as `wall_clock_now - event.ts` of the most recently
+  processed message, per the build item's own wording ("latest event
+  timestamp minus last processed event timestamp") — grows during an
+  outage, shrinks once caught up, and needs no extra broker admin queries.
+- AC2's TTL test uses dependency injection (`SESSION_TTL_SECONDS`
+  monkeypatched short) rather than literally sleeping 30 real minutes —
+  "clock-mockable" read as "make the TTL itself injectable," which
+  exercises the identical Redis `EXPIRE` mechanism production uses.
+- AC3's kill test downtime was scaled from a literal 2 minutes to ~12
+  seconds — what's being verified (consumer-group offset-commit survives
+  a restart; lag spikes then recovers) is a property of the mechanism,
+  not of the specific downtime duration, and a real OS-level "stop the
+  consumer" is well-approximated by a real thread stop+join, since the
+  offset that actually needs to survive restart lives in Kafka, not the
+  Python process.
+
+**Deviations, diagnosed and fixed:**
+- **AC3's first attempt missed the spike entirely.** Sampling lag once
+  after a fixed 0.5s warmup post-restart showed no spike (`0.008` both
+  before and "after") — not because recovery didn't happen, but because
+  processing is fast enough (~1ms/event) that the whole backlog had
+  already drained within that 0.5s window, before the sample was even
+  taken. Confirmed via `rpk group describe` that the consumer group
+  genuinely reached zero lag. Fixed by polling tightly (10ms) from the
+  instant the restarted thread starts and tracking peak lag observed,
+  rather than one delayed point-in-time read.
+- **AC7 broke AC6 and a `test_consumer.py` test.** Both had used
+  `promo_viewed` as their stand-in "unknown event type" — which stopped
+  being true the moment AC7 gave it a real handler. Fixed by switching
+  both to permanent sentinel type strings (`__replayer_unknown_event_sentinel__`,
+  `__test_unknown_event_type__`) deliberately never given handlers, so
+  future extensibility proofs can't silently break this pattern again.
+  Caught by re-running the full suite after AC7 landed, not just the
+  individual AC7 tests — the same discipline that caught Phase 1's
+  hardcoded-registry-count breaks.
+- **Two Phase 1 test files needed touching** (flagged per `CLAUDE.md`,
+  since `phase-1` is tagged): AC1's test asserted materialized names ==
+  *all* registry names, which broke once the registry held stream-only
+  features no batch job produces — fixed to compare against what the
+  discovered batch jobs actually claim. `test_invalid_dtype_raises` used
+  `dtype: bool` as its example of an invalid dtype, which stopped being
+  true once `bool` became a supported dtype — swapped to `dtype: datetime`.
+
+**Not addressed / deferred:**
+- AC7's "feature is served by Phase 3" clause is unverifiable —
+  `feature_service/` doesn't exist yet. Same caveat as Phase 1's AC5.
+- Batch and streaming compute now both honor the same registry, but
+  nothing yet unifies *reading* them into one governed API — that's
+  Phase 3's `feature_service/`.
