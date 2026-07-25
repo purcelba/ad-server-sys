@@ -32,9 +32,12 @@ jobs themselves guarantee at compute time. (Note: `"asof"` must be
 double-quoted in DuckDB SQL — it collides with DuckDB's `ASOF JOIN`
 keyword.)
 
-Currently implemented jobs (all 9 registry features): `user_ctr_by_category_30d`,
+Currently implemented jobs (all 10 registry features): `user_ctr_by_category_30d`,
 `user_ctr_30d`, `user_impressions_7d`, `user_rides_per_week`, `ad_ctr_7d`,
-`ad_ctr_30d`, `ad_impressions_7d`, `campaign_spend_yesterday`, and
+`ad_ctr_30d`, `ad_impressions_7d`, `campaign_spend_yesterday`,
+`user_account_age_days` (`jobs/user_account_age.py` — added as Phase 1's AC5
+extensibility proof: one job module + one registry entry, zero edits to
+`runner.py`/`framework.py`/`quality.py`/`materialize.py`), and
 `audience_memberships` (`jobs/audiences.py` — evaluates `common/audiences.yaml`
 rules against the same shared helpers the other jobs use, self-contained
 like every other job, not dependent on their output or run order). Shared

@@ -9,7 +9,7 @@ REGISTRY_PATH = Path(__file__).resolve().parents[1] / "registry.yaml"
 
 def test_real_registry_loads_and_validates():
     registry = load_registry(REGISTRY_PATH)
-    assert len(registry) == 9
+    assert len(registry) == 10  # 9 original + AC5's user_account_age_days extensibility proof
     assert "user_ctr_by_category_30d" in registry
     assert registry["user_ctr_by_category_30d"].entity == "user"
     assert registry["ad_ctr_7d"].entity == "ad"

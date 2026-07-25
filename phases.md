@@ -71,7 +71,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 - [x] 2. Point-in-time test: querying features "as of" day 15 returns values computed only from days 1–15.
 - [x] 3. Poisoning test: corrupt a day's events (inject 50% nulls) → pipeline fails at the quality gate and does NOT materialize.
 - [x] 4. Every materialized item carries computed_at; nothing outside the registry gets materialized.
-- [ ] 5. Extensibility proof: add a trivial new feature job (e.g. user_account_age_days) touching only its own module + registry entries — runner picks it up, quality gate applies, feature is served by Phase 3 with no other code changes. Keep this commit small as evidence the seam works.
+- [x] 5. Extensibility proof: add a trivial new feature job (e.g. user_account_age_days) touching only its own module + registry entries — runner picks it up, quality gate applies, feature is served by Phase 3 with no other code changes. Keep this commit small as evidence the seam works. (The "served by Phase 3" clause is deferred — `feature_service/` doesn't exist yet; re-verify once Phase 3 is built. Batch-side seam fully proven: registry entry + one new job module, zero edits to runner/framework/quality/materialize.)
 
 ---
 

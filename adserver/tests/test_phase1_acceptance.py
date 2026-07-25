@@ -13,11 +13,12 @@ import polars as pl
 import pytest
 
 from adserver.batch_features.jobs.ad_impressions import AdImpressionsJob
+from adserver.batch_features.jobs.user_account_age import UserAccountAgeJob
 from adserver.batch_features.jobs.user_ctr import UserCtrJob
 from adserver.batch_features.materialize import MaterializeError, TABLE_NAME, get_resource, materialize as materialize_fn
 from adserver.batch_features.offline_store import query_as_of
 from adserver.batch_features.quality import QualityGateError
-from adserver.batch_features.runner import DEFAULT_REGISTRY_PATH, run
+from adserver.batch_features.runner import DEFAULT_REGISTRY_PATH, discover_jobs, run
 from adserver.common.registry import load_registry
 from adserver.datagen.users import HISTORY_END
 
@@ -53,7 +54,7 @@ def _scan_all_items() -> list[dict]:
 def test_ac1_make_features_computes_and_materializes_all_registry_features_idempotently():
     registry = load_registry(DEFAULT_REGISTRY_PATH)
     expected_feature_names = set(registry.keys())
-    assert len(expected_feature_names) == 9  # sanity: registry hasn't silently shrunk
+    assert len(expected_feature_names) == 10  # sanity: registry hasn't silently shrunk (9 + AC5's user_account_age_days)
 
     # --- first run ---
     combined_1 = run(as_of=HISTORY_END, materialize_to_dynamo=True)
@@ -399,3 +400,58 @@ def test_ac4_materialize_enforces_the_registry_at_the_write_boundary():
     items = _scan_all_items()
     leaked = [i for i in items if i["entity_key"] == f"user#{user_id}"]
     assert leaked == [], f"rejected feature was written anyway: {leaked}"
+
+
+# --- AC5: extensibility proof ---
+# "add a trivial new feature job (e.g. user_account_age_days) touching
+# only its own module + registry entries - runner picks it up, quality
+# gate applies, feature is served by Phase 3 with no other code changes."
+#
+# user_account_age_days (batch_features/jobs/user_account_age.py) was
+# added as exactly that proof: one new job module + one registry.yaml
+# entry, zero edits to runner.py/framework.py/quality.py/materialize.py.
+# Confirmed via `git diff --stat` before this commit: registry.yaml
+# +10 lines, one new file, nothing else touched.
+#
+# The "served by Phase 3" clause can't be verified yet - feature_service/
+# doesn't exist (Phase 3 hasn't been built). This test covers everything
+# verifiable now: discovery, computation correctness, quality gate,
+# materialization. Re-verify the serving half once Phase 3 exists.
+
+
+def test_ac5_new_job_is_auto_discovered_with_no_runner_changes():
+    jobs = discover_jobs()
+    names = {type(j).__name__ for j in jobs}
+    assert "UserAccountAgeJob" in names
+
+
+def test_ac5_new_feature_computes_correctly():
+    users = pl.read_parquet("data/users.parquet")
+    as_of = HISTORY_END
+    df = UserAccountAgeJob().compute(as_of)
+
+    assert df.height == 50
+    assert set(df.columns) == {"user_id", "user_account_age_days"}
+
+    # independently recompute expected age for a sample user and cross-check
+    sample = users.row(0, named=True)
+    expected_age = (as_of - sample["created_at"]).days
+    actual_age = df.filter(df["user_id"] == sample["user_id"])["user_account_age_days"].item()
+    assert actual_age == expected_age
+
+
+@requires_dynamo
+def test_ac5_new_feature_flows_through_the_full_pipeline_and_materializes():
+    registry = load_registry(DEFAULT_REGISTRY_PATH)
+    assert "user_account_age_days" in registry
+    assert registry["user_account_age_days"].entity == "user"
+
+    combined = run(as_of=HISTORY_END, materialize_to_dynamo=True)
+    assert "user_account_age_days" in combined["user"].columns
+    ages = combined["user"]["user_account_age_days"]
+    assert ages.null_count() == 0  # every user has a created_at, so full coverage
+    assert (ages >= 0).all()
+
+    items = _scan_all_items()
+    age_items = [i for i in items if i["feature_name"] == "user_account_age_days"]
+    assert len(age_items) == 50
