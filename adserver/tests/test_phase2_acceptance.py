@@ -48,13 +48,24 @@ def redis_client():
 
 class ConsumerHandle:
     """Starts a real consume loop on a background thread for the duration
-    of a test, with its own Metrics instance."""
+    of a test, with its own Metrics instance.
 
-    def __init__(self):
+    Uses a unique consumer group id per instance by default (a fixed,
+    shared group across independent test runs caused Kafka rebalance-
+    delay interference between them - diagnosed after AC3 and AC7 failed
+    only when run together, never in isolation). Pass `group_id`
+    explicitly to make a "restarted" handle rejoin the same group as an
+    earlier one - the whole point of the kill test."""
+
+    def __init__(self, group_id: str | None = None):
+        self.group_id = group_id or f"test-group-{uuid.uuid4().hex[:8]}"
         self.metrics = Metrics()
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
-            target=run_consume_loop, args=(self.metrics, self._stop_event), daemon=True
+            target=run_consume_loop,
+            args=(self.metrics, self._stop_event),
+            kwargs={"group_id": self.group_id, "auto_offset_reset": "latest"},
+            daemon=True,
         )
 
     def start(self, warmup_sec: float = 2.0):
@@ -384,7 +395,7 @@ def test_ac3_kill_test_lag_spikes_and_recovers_no_crash_no_data_loss():
     # warmup can miss the spike entirely by arriving after it already
     # recovered. Instead: start the thread directly (no warmup sleep) and
     # poll tightly from the first instant, tracking the peak lag seen.
-    restarted = ConsumerHandle()
+    restarted = ConsumerHandle(group_id=handle.group_id)  # rejoin the same group to resume from its committed offset
     restarted._thread.start()
     peak_lag_seen = 0.0
     poll_until = time.time() + 5.0

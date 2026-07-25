@@ -107,7 +107,17 @@ def run_consume_loop(
     bootstrap_servers: str = DEFAULT_BOOTSTRAP_SERVERS,
     redis_host: str = DEFAULT_REDIS_HOST,
     redis_port: int = DEFAULT_REDIS_PORT,
+    group_id: str = CONSUMER_GROUP_ID,
+    auto_offset_reset: str = "earliest",
 ) -> None:
+    """`group_id`/`auto_offset_reset` default to fixed production values
+    (a genuinely fresh production deployment should read from the
+    beginning) - override only for test isolation. A shared, fixed group
+    across independent test runs causes Kafka rebalance-delay
+    interference between them; even with a unique group per test,
+    "earliest" would replay the entire topic's history (every event ever
+    published by any earlier test run) instead of just what that test
+    itself publishes. See tests/test_phase2_acceptance.py's ConsumerHandle."""
     handlers = discover_handlers()
     redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
     state = SessionState(redis_client)
@@ -115,8 +125,8 @@ def run_consume_loop(
     consumer = Consumer(
         {
             "bootstrap.servers": bootstrap_servers,
-            "group.id": CONSUMER_GROUP_ID,
-            "auto.offset.reset": "earliest",
+            "group.id": group_id,
+            "auto.offset.reset": auto_offset_reset,
             "enable.auto.commit": True,
         }
     )
