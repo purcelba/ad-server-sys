@@ -150,3 +150,16 @@ features:
     freshness_sla: 5s
     default: 0
     owner: ads-ml
+
+  # Phase 2 AC7 extensibility proof: one handler module + this entry +
+  # one new EVENT_TYPES entry (promo_viewed was new) - zero edits to
+  # consumer.py/framework.py/state.py.
+  - name: promos_viewed_10min
+    entity: user
+    dtype: int
+    description: Count of promos viewed in the trailing 10 minutes.
+    aggregation: count
+    window: 10m
+    freshness_sla: 5s
+    default: 0
+    owner: ads-ml

@@ -14,7 +14,13 @@ from datetime import datetime
 
 TOPIC = "session_events"
 
-EVENT_TYPES = {"session_start", "destination_entered", "ride_type_selected", "app_screen_view"}
+EVENT_TYPES = {
+    "session_start",
+    "destination_entered",
+    "ride_type_selected",
+    "app_screen_view",
+    "promo_viewed",  # Phase 2 AC7 extensibility proof — stream_features/handlers/promo_viewed.py
+}
 
 
 class EventValidationError(ValueError):
