@@ -105,3 +105,48 @@ features:
     freshness_sla: 24h
     default: 0
     owner: ads-ml
+
+  # --- Phase 2: real-time session features (stream_features/), Redis-backed,
+  # written with a 30-minute TTL. freshness_sla is in seconds here, not
+  # hours, since these are meant to be fresh within a couple of seconds.
+  - name: user_session_active
+    entity: user
+    dtype: bool
+    description: >-
+      Whether the user currently has an active session (any session event
+      seen within the last 30 minutes).
+    aggregation: presence
+    window: n/a
+    freshness_sla: 5s
+    default: false
+    owner: ads-ml
+
+  - name: user_current_destination_category
+    entity: user
+    dtype: str
+    description: Category of the most recently entered destination in the current session.
+    aggregation: latest
+    window: n/a
+    freshness_sla: 5s
+    default: ""
+    owner: ads-ml
+
+  - name: user_current_ride_type
+    entity: user
+    dtype: str
+    description: Most recently selected ride type in the current session.
+    aggregation: latest
+    window: n/a
+    freshness_sla: 5s
+    default: ""
+    owner: ads-ml
+
+  - name: user_screens_viewed_10min
+    entity: user
+    dtype: int
+    description: Count of app screens viewed in the trailing 10 minutes.
+    aggregation: count
+    window: 10m
+    freshness_sla: 5s
+    default: 0
+    owner: ads-ml

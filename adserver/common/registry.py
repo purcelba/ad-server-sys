@@ -14,7 +14,7 @@ from pathlib import Path
 import yaml
 
 VALID_ENTITIES = {"user", "ad"}
-VALID_DTYPES = {"float", "int", "str", "list[str]", "map[str,float]"}
+VALID_DTYPES = {"float", "int", "str", "bool", "list[str]", "map[str,float]"}
 REQUIRED_FIELDS = [
     "name",
     "entity",

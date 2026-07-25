@@ -53,8 +53,15 @@ def _scan_all_items() -> list[dict]:
 @requires_dynamo
 def test_ac1_make_features_computes_and_materializes_all_registry_features_idempotently():
     registry = load_registry(DEFAULT_REGISTRY_PATH)
-    expected_feature_names = set(registry.keys())
-    assert len(expected_feature_names) == 10  # sanity: registry hasn't silently shrunk (9 + AC5's user_account_age_days)
+
+    # "all registry features" here means all *batch-produced* ones - as of
+    # Phase 2, the registry also holds stream-only features (written by
+    # stream_features/consumer.py, not by any batch job), so the exact set
+    # this AC covers is what the discovered batch jobs actually claim to
+    # produce, not literally every registry entry.
+    expected_feature_names = {name for job in discover_jobs() for name in job.outputs()}
+    assert len(expected_feature_names) == 10  # sanity: batch jobs haven't silently shrunk (9 + AC5's user_account_age_days)
+    assert expected_feature_names.issubset(registry.keys())
 
     # --- first run ---
     combined_1 = run(as_of=HISTORY_END, materialize_to_dynamo=True)

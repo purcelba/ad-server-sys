@@ -9,7 +9,7 @@ REGISTRY_PATH = Path(__file__).resolve().parents[1] / "registry.yaml"
 
 def test_real_registry_loads_and_validates():
     registry = load_registry(REGISTRY_PATH)
-    assert len(registry) == 10  # 9 original + AC5's user_account_age_days extensibility proof
+    assert len(registry) == 14  # 10 batch (Phase 1) + 4 stream (Phase 2 session features)
     assert "user_ctr_by_category_30d" in registry
     assert registry["user_ctr_by_category_30d"].entity == "user"
     assert registry["ad_ctr_7d"].entity == "ad"
@@ -68,12 +68,12 @@ def test_invalid_dtype_raises(tmp_path):
 features:
   - name: bad_dtype_feature
     entity: user
-    dtype: bool
-    description: bool is not a supported dtype
+    dtype: datetime
+    description: datetime is not a supported dtype
     aggregation: ctr
     window: 7d
     freshness_sla: 24h
-    default: false
+    default: null
     owner: ads-ml
 """,
     )
