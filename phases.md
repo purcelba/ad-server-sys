@@ -71,7 +71,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 - [x] 2. Point-in-time test: querying features "as of" day 15 returns values computed only from days 1–15.
 - [x] 3. Poisoning test: corrupt a day's events (inject 50% nulls) → pipeline fails at the quality gate and does NOT materialize.
 - [x] 4. Every materialized item carries computed_at; nothing outside the registry gets materialized.
-- [x] 5. Extensibility proof: add a trivial new feature job (e.g. user_account_age_days) touching only its own module + registry entries — runner picks it up, quality gate applies, feature is served by Phase 3 with no other code changes. Keep this commit small as evidence the seam works. (The "served by Phase 3" clause is deferred — `feature_service/` doesn't exist yet; re-verify once Phase 3 is built. Batch-side seam fully proven: registry entry + one new job module, zero edits to runner/framework/quality/materialize.)
+- [x] 5. Extensibility proof: add a trivial new feature job (e.g. user_account_age_days) touching only its own module + registry entries — runner picks it up, quality gate applies, feature is served by Phase 3 with no other code changes. Keep this commit small as evidence the seam works. (Re-verified now that Phase 3 exists: `user_account_age_days` is resolved correctly by `feature_service`'s `test_ac3_online_batch_features_match_offline_store_for_sampled_users` with zero edits to `feature_service/` — the "served by Phase 3" clause is fully proven.)
 
 ---
 
@@ -99,7 +99,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 - [x] 4. Lag and throughput visible via `/metrics` while replaying.
 - [x] 5. Manually fired event from the mini page is visible in Redis (correct feature, correct TTL) within 2 seconds — verified by hand and by one automated test hitting the publish endpoint.
 - [x] 6. Unknown-event test: replay a stream containing a novel event type → consumer neither crashes nor stalls, known features keep updating, and the unknown type appears in the metrics counter.
-- [x] 7. Streaming extensibility proof: add a handler for a new event type (e.g. `promo_viewed` → `promos_viewed_10min`) touching only its own handler module + registry entries (+ event schema); the feature flows through to the Phase 3 feature service with no other code changes. Keep the commit small as evidence, mirroring the Phase 1 proof. (The "served by Phase 3" clause is deferred — `feature_service/` doesn't exist yet; re-verify once Phase 3 is built.)
+- [x] 7. Streaming extensibility proof: add a handler for a new event type (e.g. `promo_viewed` → `promos_viewed_10min`) touching only its own handler module + registry entries (+ event schema); the feature flows through to the Phase 3 feature service with no other code changes. Keep the commit small as evidence, mirroring the Phase 1 proof. (Re-verified now that Phase 3 exists: `promos_viewed_10min` resolves correctly through `feature_service`'s Redis-first path with zero edits to `feature_service/` — the "served by Phase 3" clause is fully proven.)
 
 ---
 
@@ -108,16 +108,16 @@ A learning project: a miniature real-time ad serving system combining batch and 
 **Goal:** one governed API assembling batch + real-time features with freshness semantics.
 
 **Build:**
-- [ ] `feature_service/` (FastAPI): `POST /features` with entity ids + feature names → values, plus per-feature metadata: computed_at, freshness_status (`fresh` | `stale` | `missing`, judged against the registry SLA), and whether a default was substituted. Reads Redis first (cache + real-time features), falls back to DynamoDB-local.
-- [ ] Defaults policy: missing feature → registry default, flagged as `missing`. Nulls never returned.
-- [ ] OpenAPI schema committed to the repo; a test fails if the running service's schema drifts from the committed one (breaking-change tripwire).
-- [ ] Latency histogram in `/metrics`; target p99 ≤ 10ms locally.
+- [x] `feature_service/` (FastAPI): `POST /features` with entity ids + feature names → values, plus per-feature metadata: computed_at, freshness_status (`fresh` | `stale` | `missing`, judged against the registry SLA), and whether a default was substituted. Reads Redis first (cache + real-time features), falls back to DynamoDB-local.
+- [x] Defaults policy: missing feature → registry default, flagged as `missing`. Nulls never returned.
+- [x] OpenAPI schema committed to the repo; a test fails if the running service's schema drifts from the committed one (breaking-change tripwire).
+- [x] Latency histogram in `/metrics`; target p99 ≤ 10ms locally. (Target not met on this local dev machine — see `feature_service/README.md`'s "Known deviation: AC4 load target". Histogram itself is built and correct.)
 
 **Acceptance criteria:**
-- [ ] 1. Request mixing batch, real-time, and nonexistent-entity features returns correct values + correct freshness_status for each, defaults substituted where needed.
-- [ ] 2. Schema-drift test passes; deliberately changing a response field makes it fail.
-- [ ] 3. **Parity test (required, in `tests/`):** for 20 sampled users, features served online equal features computed offline for the same date (within float tolerance).
-- [ ] 4. p99 ≤ 10ms at 100 concurrent requests (locust or simple asyncio load script).
+- [x] 1. Request mixing batch, real-time, and nonexistent-entity features returns correct values + correct freshness_status for each, defaults substituted where needed.
+- [x] 2. Schema-drift test passes; deliberately changing a response field makes it fail.
+- [x] 3. **Parity test (required, in `tests/`):** for 20 sampled users, features served online equal features computed offline for the same date (within float tolerance).
+- [~] 4. p99 ≤ 10ms at 100 concurrent requests (locust or simple asyncio load script). **Deviation:** built and measured (`loadtest.py`, thread-based concurrent client), but actual p99 on this local dev machine is ~60-95ms, not ≤10ms — see `feature_service/README.md` for the full tuning trail (DynamoDB-local connection pooling + in-process cache, multi-worker uvicorn, GC tuning, access-log removal, Redis pool warmup) and why the gap appears to be local machine contention rather than resolver overhead (a single uncontended request is ~5-12ms).
 
 ---
 
