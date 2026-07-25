@@ -91,16 +91,19 @@ def test_process_event_unknown_type_does_not_crash_and_is_counted(redis_client, 
     state = SessionState(redis_client)
     metrics = Metrics()
 
-    raw = _event_json(user_id, "promo_viewed", {"promo_id": "p1"})
+    # promo_viewed is a real, handled type as of Phase 2 AC7 - use a type
+    # that is deliberately never given a handler (same reasoning as
+    # datagen/replay.py's __replayer_unknown_event_sentinel__)
+    raw = _event_json(user_id, "__test_unknown_event_type__", {"promo_id": "p1"})
     event = process_event(raw, handlers, redis_client, state, metrics)
 
     assert event is None  # unknown types return None, not an exception
     snapshot = metrics.snapshot()
-    assert snapshot["unknown_events_by_type"] == {"promo_viewed": 1}
+    assert snapshot["unknown_events_by_type"] == {"__test_unknown_event_type__": 1}
     assert snapshot["events_consumed_total"] == 0
 
     # nothing was written to redis for an unknown type
-    assert redis_client.get(f"feature:user:{user_id}:promo_viewed") is None
+    assert redis_client.get(f"feature:user:{user_id}:__test_unknown_event_type__") is None
 
 
 @requires_redis

@@ -52,7 +52,7 @@ def test_unknown_event_rate_produces_novel_type():
     rng = np.random.default_rng(1)
     active = {}
     event = generate_next_event(rng, USER_IDS, active, NOW, unknown_event_rate=1.0)
-    assert event.event_type == "promo_viewed"
+    assert event.event_type == "__replayer_unknown_event_sentinel__"
 
 
 def test_zero_unknown_event_rate_never_produces_novel_type():
@@ -60,4 +60,4 @@ def test_zero_unknown_event_rate_never_produces_novel_type():
     active = {}
     for _ in range(50):
         event = generate_next_event(rng, USER_IDS, active, NOW, unknown_event_rate=0.0)
-        assert event.event_type != "promo_viewed"
+        assert event.event_type != "__replayer_unknown_event_sentinel__"

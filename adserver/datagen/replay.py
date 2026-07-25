@@ -74,16 +74,24 @@ def generate_next_event(
 ) -> SessionEvent:
     """One event: either starts a new session, continues an active one, or
     (if `unknown_event_rate` fires) emits a novel event type — used to
-    exercise unknown-event tolerance (AC6)."""
+    exercise unknown-event tolerance (AC6).
+
+    The injected type is a permanent sentinel, deliberately never added
+    to EVENT_TYPES or given a handler — unlike promo_viewed (Phase 2
+    AC7's extensibility proof), which started as an unknown-event stand-in
+    but stopped being "unknown" once it got a real handler. Reusing a
+    type that might later become real would silently break this test on
+    a future re-run.
+    """
     if unknown_event_rate > 0 and rng.uniform(0.0, 1.0) < unknown_event_rate:
         user_id = user_ids[int(rng.integers(0, len(user_ids)))]
         return SessionEvent(
             event_id=str(uuid.uuid4()),
-            event_type="promo_viewed",
+            event_type="__replayer_unknown_event_sentinel__",
             user_id=user_id,
             session_id=str(uuid.uuid4()),
             ts=now,
-            payload={"promo_id": f"promo_{int(rng.integers(0, 100))}"},
+            payload={"note": "deliberately unrecognized, for testing unknown-event tolerance"},
         )
 
     start_new = (not active_sessions) or (rng.uniform(0.0, 1.0) < new_session_probability)

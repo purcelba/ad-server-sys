@@ -9,7 +9,7 @@ REGISTRY_PATH = Path(__file__).resolve().parents[1] / "registry.yaml"
 
 def test_real_registry_loads_and_validates():
     registry = load_registry(REGISTRY_PATH)
-    assert len(registry) == 14  # 10 batch (Phase 1) + 4 stream (Phase 2 session features)
+    assert len(registry) == 15  # 10 batch (Phase 1) + 5 stream (Phase 2 session features + AC7's promos_viewed_10min)
     assert "user_ctr_by_category_30d" in registry
     assert registry["user_ctr_by_category_30d"].entity == "user"
     assert registry["ad_ctr_7d"].entity == "ad"
