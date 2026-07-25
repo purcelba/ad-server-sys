@@ -74,6 +74,72 @@ uv run python -m adserver.datagen.replay --duration-sec 30   # load harness
 uv run python -m adserver.ui.publish_api   # mini page at :8002
 ```
 
+## Manual walkthrough & debugging
+
+What actually happens when you fire one event from the mini page, and
+what tool is doing what at each stage:
+
+1. **Browser (`ui/mini.html`, plain JS)** — packages your form selections
+   into JSON and `fetch()`s it to the publish API. Stands in for a real
+   app's event-tracking code.
+2. **FastAPI (`ui/publish_api.py`)** — receives the HTTP request, builds a
+   proper event record (adds an ID, timestamp, session ID), does a quick
+   sanity check (`validate_for_publish()`: is this a real event type?),
+   and publishes it. Its whole job is "HTTP request → Kafka message."
+3. **Redpanda** (a Kafka-compatible message broker) — the durable middle
+   layer. A queue: publish_api drops the event in, and anyone subscribed
+   can pick it up whenever they're ready. This decoupling is the point —
+   the publisher doesn't need to know who's reading or how fast.
+4. **`confluent-kafka` + the consumer process (`consumer.py`)** — a
+   background process continuously pulling new messages off that queue,
+   figuring out each one's `event_type`.
+5. **The handler** (e.g. `handlers/ride_type_selected.py`) — small,
+   type-specific logic deciding what feature value this event produces.
+   Most are trivial; `app_screen_view`'s does a bit of sliding-window math.
+6. **Redis** — where the finished feature value actually lands, keyed by
+   user + feature name, with a 30-minute TTL. This is the "ready for
+   online inference" endpoint — anything reading real-time signal at
+   serving time would read from here, because it's fast enough to check
+   on every request without adding noticeable delay.
+7. **(Not built yet) `feature_service/`, Phase 3** — the governed API that
+   would read Redis (+ DynamoDB for batch features) and hand a unified
+   answer to whatever's making the ad-ranking decision. Right now you can
+   *see* the feature sitting in Redis via a direct `GET`, but there's no
+   serving layer in front of it yet.
+
+`/metrics` isn't a stage in this journey — it's a window onto steps 4-6,
+reporting throughput/latency/unknown-type counts. Useful for debugging,
+not part of the data path itself.
+
+**Watching it happen, live**, two terminals:
+```bash
+# terminal 1 - tail the raw topic (shows the event the instant it's published)
+docker exec ad-server-sys-redpanda-1 rpk topic consume session_events
+
+# terminal 2 - watch it land in Redis once processed (swap in your user/feature)
+watch -n 1 "uv run python -c \"import redis; r=redis.Redis(host='localhost',port=6379,decode_responses=True); print(r.get('feature:user:u_0001:user_current_ride_type'))\""
+```
+Fire an event from the mini page; it should appear in terminal 1
+immediately, and terminal 2 within about a second.
+
+Some things worth knowing before you go looking for them:
+- **The consumer log (`consumer.py`'s `logger` calls) stays silent on the
+  happy path.** It only logs unusual things — unknown event types, errors
+  — never a line per successfully-processed event. If you're expecting to
+  see activity there per click, you won't; check `/metrics` or Redis
+  instead (`curl -s http://localhost:8001/metrics | python3 -m json.tool`).
+- **A one-time `WARNING: kafka error: ... Unknown topic or partition`** on
+  consumer startup is expected, not a failure — the topic doesn't exist
+  until the first message is ever published to it (Redpanda auto-creates
+  on first `produce()`), and the consumer's subscribe can land a beat
+  before that. It's handled non-fatally and self-resolves after the first
+  publish; `datagen/replay.py::ensure_topic()` avoids it entirely for the
+  replayer by creating the topic explicitly up front.
+- **Kafka topics aren't queryable like a database** — no index on
+  payload fields. "Find events for `u_0001`" means consuming and filtering
+  client-side (e.g. `rpk topic consume -n 100 | jq 'select(...)'`), not a
+  lookup.
+
 ## Production analog
 This is the local, plain-Python stand-in for a production stream
 processor — e.g. Kinesis/Kafka + Flink, with a real online feature store
