@@ -1,4 +1,4 @@
-.PHONY: up down test demo eda reach features replay consumer
+.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features
 
 up:
 	docker compose up -d
@@ -38,3 +38,9 @@ consumer: demo
 
 replay: demo
 	uv run python -m adserver.datagen.replay
+
+serve-features: features
+	uv run python -m adserver.feature_service.service
+
+loadtest-features:
+	uv run python -m adserver.feature_service.loadtest
