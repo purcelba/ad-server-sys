@@ -1,0 +1,247 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "FastAPI",
+        "version": "0.1.0"
+    },
+    "paths": {
+        "/health": {
+            "get": {
+                "summary": "Health",
+                "operationId": "health_health_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/metrics": {
+            "get": {
+                "summary": "Get Metrics",
+                "operationId": "get_metrics_metrics_get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/features": {
+            "post": {
+                "summary": "Get Features",
+                "operationId": "get_features_features_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FeaturesRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/FeaturesResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "EntityResultOut": {
+                "properties": {
+                    "entity_type": {
+                        "type": "string",
+                        "title": "Entity Type"
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "title": "Entity Id"
+                    },
+                    "features": {
+                        "additionalProperties": {
+                            "$ref": "#/components/schemas/FeatureResultOut"
+                        },
+                        "type": "object",
+                        "title": "Features"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "entity_type",
+                    "entity_id",
+                    "features"
+                ],
+                "title": "EntityResultOut"
+            },
+            "FeatureQuery": {
+                "properties": {
+                    "entity_type": {
+                        "type": "string",
+                        "title": "Entity Type"
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "title": "Entity Id"
+                    },
+                    "feature_names": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "title": "Feature Names"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "entity_type",
+                    "entity_id",
+                    "feature_names"
+                ],
+                "title": "FeatureQuery"
+            },
+            "FeatureResultOut": {
+                "properties": {
+                    "value": {
+                        "title": "Value"
+                    },
+                    "computed_at": {
+                        "type": "string",
+                        "title": "Computed At"
+                    },
+                    "freshness_status": {
+                        "type": "string",
+                        "title": "Freshness Status"
+                    },
+                    "default_substituted": {
+                        "type": "boolean",
+                        "title": "Default Substituted"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "value",
+                    "computed_at",
+                    "freshness_status",
+                    "default_substituted"
+                ],
+                "title": "FeatureResultOut"
+            },
+            "FeaturesRequest": {
+                "properties": {
+                    "queries": {
+                        "items": {
+                            "$ref": "#/components/schemas/FeatureQuery"
+                        },
+                        "type": "array",
+                        "title": "Queries"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "queries"
+                ],
+                "title": "FeaturesRequest"
+            },
+            "FeaturesResponse": {
+                "properties": {
+                    "results": {
+                        "items": {
+                            "$ref": "#/components/schemas/EntityResultOut"
+                        },
+                        "type": "array",
+                        "title": "Results"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "results"
+                ],
+                "title": "FeaturesResponse"
+            },
+            "HTTPValidationError": {
+                "properties": {
+                    "detail": {
+                        "items": {
+                            "$ref": "#/components/schemas/ValidationError"
+                        },
+                        "type": "array",
+                        "title": "Detail"
+                    }
+                },
+                "type": "object",
+                "title": "HTTPValidationError"
+            },
+            "ValidationError": {
+                "properties": {
+                    "loc": {
+                        "items": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "integer"
+                                }
+                            ]
+                        },
+                        "type": "array",
+                        "title": "Location"
+                    },
+                    "msg": {
+                        "type": "string",
+                        "title": "Message"
+                    },
+                    "type": {
+                        "type": "string",
+                        "title": "Error Type"
+                    },
+                    "input": {
+                        "title": "Input"
+                    },
+                    "ctx": {
+                        "type": "object",
+                        "title": "Context"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "loc",
+                    "msg",
+                    "type"
+                ],
+                "title": "ValidationError"
+            }
+        }
+    }
+}
