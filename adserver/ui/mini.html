@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mini event page</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 420px; margin: 40px auto; }
+    label { display: block; margin-top: 12px; font-weight: 600; }
+    select, button { width: 100%; padding: 8px; margin-top: 4px; font-size: 14px; }
+    button { margin-top: 20px; background: #222; color: white; border: none; cursor: pointer; }
+    button:hover { background: #444; }
+    #result { margin-top: 16px; font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+    .field { display: none; }
+    .field.visible { display: block; }
+  </style>
+</head>
+<body>
+  <h2>Mini event page</h2>
+  <p>Fires one real session event to Redpanda, exactly as an app client
+  would — the precision instrument for Phase 2's real-time path.</p>
+
+  <label for="user_id">User</label>
+  <select id="user_id">
+    {{USER_OPTIONS}}
+  </select>
+
+  <label for="event_type">Event type</label>
+  <select id="event_type" onchange="updateFields()">
+    <option value="session_start">session_start</option>
+    <option value="destination_entered">destination_entered</option>
+    <option value="ride_type_selected">ride_type_selected</option>
+    <option value="app_screen_view">app_screen_view</option>
+  </select>
+
+  <div id="destination_field" class="field">
+    <label for="category">Destination category</label>
+    <select id="category">
+      <option value="food">food</option>
+      <option value="retail">retail</option>
+      <option value="entertainment">entertainment</option>
+      <option value="travel">travel</option>
+      <option value="transit">transit</option>
+    </select>
+  </div>
+
+  <div id="ride_type_field" class="field">
+    <label for="ride_type">Ride type</label>
+    <select id="ride_type">
+      <option value="standard">standard</option>
+      <option value="shared">shared</option>
+      <option value="premium">premium</option>
+    </select>
+  </div>
+
+  <div id="screen_field" class="field">
+    <label for="screen">Screen</label>
+    <select id="screen">
+      <option value="home">home</option>
+      <option value="search">search</option>
+      <option value="trip_history">trip_history</option>
+      <option value="account">account</option>
+      <option value="promotions">promotions</option>
+    </select>
+  </div>
+
+  <button onclick="fireEvent()">Fire event</button>
+  <div id="result"></div>
+
+  <script>
+    function updateFields() {
+      const type = document.getElementById("event_type").value;
+      document.querySelectorAll(".field").forEach(el => el.classList.remove("visible"));
+      if (type === "destination_entered") document.getElementById("destination_field").classList.add("visible");
+      if (type === "ride_type_selected") document.getElementById("ride_type_field").classList.add("visible");
+      if (type === "app_screen_view") document.getElementById("screen_field").classList.add("visible");
+    }
+    updateFields();
+
+    async function fireEvent() {
+      const eventType = document.getElementById("event_type").value;
+      const userId = document.getElementById("user_id").value;
+      let payload = {};
+      if (eventType === "destination_entered") {
+        payload = { category: document.getElementById("category").value, geo: "sea" };
+      } else if (eventType === "ride_type_selected") {
+        payload = { ride_type: document.getElementById("ride_type").value };
+      } else if (eventType === "app_screen_view") {
+        payload = { screen: document.getElementById("screen").value };
+      }
+
+      const resp = await fetch("/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, event_type: eventType, payload: payload }),
+      });
+      const body = await resp.json();
+      document.getElementById("result").textContent = JSON.stringify(body, null, 2);
+    }
+  </script>
+</body>
+</html>
