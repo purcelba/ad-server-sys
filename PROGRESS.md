@@ -78,3 +78,80 @@ before being made, and `phase-0`'s tag was not moved for it — it's
 recorded here as an explicit amendment instead. `phases.md`'s Phase 0 build
 item and AC2 were updated to mention `rides.parquet`; all Phase 0 tests
 (now 26) still pass.
+
+## Phase 1 — Feature registry + batch feature pipeline (`phase-1`)
+
+**Built:** `common/registry.yaml` + `registry.py` (10 features declared —
+9 original + `user_account_age_days`, added as the AC5 extensibility
+proof; loader validates required fields, entity/dtype enums, freshness
+SLA format, raising `RegistryError` naming the offender); `common/audiences.yaml`
++ `audiences.py` (2 named, versioned audiences as ANDed rules over
+registry features, same governance pattern as the registry);
+`batch_features/framework.py`'s `FeatureJob` interface + `runner.py`'s
+auto-discovering runner (`pkgutil`-based, no hand-maintained job list);
+10 jobs in `jobs/` covering every registry feature, with shared
+point-in-time computation helpers in `jobs/_shared.py`; `quality.py`'s
+data-quality gate (row-count + null-rate, job-specific expected-entity-count
+denominators); `offline_store.py`'s DuckDB point-in-time query layer over
+the date-partitioned Parquet store; `materialize.py`'s single-table
+DynamoDB-local materialization, independently registry-validated at the
+write boundary; `reach.py` + `make reach`; `cli.py` + `make features`.
+All 5 build items and all 5 acceptance criteria checked off in
+`phases.md`. 83 tests, all passing against live infra.
+
+**Decisions made (not previously locked in `CLAUDE.md`/`phases.md`):**
+- `events.parquet`'s CTR/impression jobs report `null` (not a fabricated
+  zero) for entities with no data in a window — nulls get resolved to the
+  registry default at read time in Phase 3, per the defaults policy.
+  `campaign_spend_yesterday` is the deliberate exception: it explicitly
+  backfills every campaign to `0.0`, since a guaranteed campaign with no
+  impressions yesterday has a real, known-zero spend, not an unknown one.
+- Data-quality row-count denominators are job-specific, not "every entity
+  in the catalog": ad-level windowed jobs (`ad_ctr_7d`/`30d`,
+  `ad_impressions_7d`) count only campaigns whose flight is `active` and
+  overlaps the window — verified directly (22/40 campaigns have 7d
+  impressions, but that's 22/22 of campaigns actually eligible).
+- Offline store partitions are queried via DuckDB SQL with hive-partition
+  discovery (`available_partitions()`/`query_as_of()` in `offline_store.py`)
+  — added after noticing the original build only wrote point-in-time-correct
+  partitions but never queried them back, despite the build item explicitly
+  naming DuckDB as the query mechanism.
+
+**Deviations, diagnosed and fixed:**
+- **Row-count gate blind to null entity IDs.** While building AC3's
+  poisoning test, found that Polars' `group_by()` turns a corrupted
+  (nulled) id column into its own spurious group, which the row-count
+  check was counting as real coverage — a corrupted campaign could vanish
+  entirely while the gate reported 100%. Fixed in `runner.py`: rows with
+  a null entity id are dropped before either the quality gate or
+  `materialize()` see them. Also would have let a literal `"ad#None"` key
+  reach DynamoDB.
+- **`materialize()` didn't independently enforce the registry.** While
+  building AC4, found that "nothing outside the registry gets
+  materialized" was only true because `runner.run()` happened to validate
+  first — `materialize()`, the actual DynamoDB write boundary, trusted
+  whatever `feature_names` it was given. Fixed: it now loads the registry
+  itself and validates every feature name + entity before writing
+  anything, raising `MaterializeError` otherwise.
+- **AC3's poisoning test doesn't trip on the real dataset.** Corrupting
+  one real day's events at 50% nulls does not fail either quality check
+  at this data volume — a single day is too small a fraction of any job's
+  window, and `campaign_spend_yesterday` is structurally immune regardless
+  of severity (verified directly by running the corrupted case). Rather
+  than retune production thresholds as a side effect of writing a test,
+  AC3 was proven against a small, deliberately sized synthetic dataset
+  instead — same approach as AC2's point-in-time proof.
+- **Test-pollution in the shared `dynamodb-local` table.** Mutation-testing
+  the AC3 and AC4 fixes (deliberately reverting each, confirming the test
+  then fails, restoring, confirming it passes again) surfaced that fixed
+  test IDs (`c_1`/`c_2`, `u_ac4_test`) collided with leftover items from
+  the deliberately-broken runs. Fixed by switching to per-invocation
+  unique IDs (`uuid4`) in both tests.
+
+**Not addressed / deferred:**
+- AC5's "feature is served by Phase 3" clause is unverifiable —
+  `feature_service/` doesn't exist yet. Noted explicitly in `phases.md`
+  rather than marked done; re-verify once Phase 3 is built.
+- Streaming feature compute (Phase 2) is expected to honor the same
+  registry contract per the build item's extensibility framing, but
+  nothing here builds toward that yet — out of scope until Phase 2.
