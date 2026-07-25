@@ -97,6 +97,15 @@ def run(
     for job in all_jobs:
         df = job.compute(as_of, data_dir)
         _validate_output(job, df, registry)
+
+        # A null entity id (e.g. from a corrupted source column that Polars
+        # group_by() happily turns into its own group) never represents a
+        # real entity and must never count as coverage or reach
+        # materialization as a literal "user#None"/"ad#None" key - drop it
+        # here, before either the quality gate or materialize() see it.
+        id_col = job.entity_id_column()
+        df = df.filter(pl.col(id_col).is_not_null())
+
         expected_count = job.expected_entity_count(as_of, data_dir)
         quality.check(df, expected_count, job.outputs(), type(job).__name__)
         by_entity[job.entity()].append(df)

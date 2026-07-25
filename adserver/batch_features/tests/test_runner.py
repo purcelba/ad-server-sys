@@ -129,3 +129,36 @@ def test_run_blocks_materialization_when_a_job_fails_the_quality_gate(tmp_path):
 
     # no partial write - the failure must happen before any output is written
     assert not output_dir.exists()
+
+
+class _NullIdRowJob(FeatureJob):
+    """1 real entity + 1 row with a null id, mimicking what Polars
+    group_by() produces when a source column (e.g. campaign_id) is
+    corrupted to null - the null-keyed group is a real row in the
+    DataFrame, but it doesn't represent any real entity."""
+
+    def entity(self) -> str:
+        return "ad"
+
+    def outputs(self) -> list[str]:
+        return ["ad_ctr_7d"]
+
+    def compute(self, as_of, data_dir=Path("data")) -> pl.DataFrame:
+        return pl.DataFrame(
+            {"campaign_id": ["c_0001", None], "ad_ctr_7d": [0.03, 0.05]},
+            schema={"campaign_id": pl.Utf8, "ad_ctr_7d": pl.Float64},
+        )
+
+    def expected_entity_count(self, as_of, data_dir=Path("data")) -> int:
+        return 2  # both "entities" would count if the null row weren't dropped
+
+
+def test_run_never_counts_a_null_entity_id_as_coverage(tmp_path):
+    """Regression test: a null id must be dropped before the quality gate
+    sees it, both so row-count reflects only real entities (1/2 = 50%,
+    correctly failing) and so a literal 'ad#None' key never reaches
+    materialize()."""
+    output_dir = tmp_path / "features"
+    with pytest.raises(QualityGateError, match="row-count"):
+        run(as_of=AS_OF, output_dir=output_dir, jobs=[_NullIdRowJob()])
+    assert not output_dir.exists()
