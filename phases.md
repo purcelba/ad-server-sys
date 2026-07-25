@@ -179,7 +179,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 
 **Build:**
 - [ ] `ops/reconcile.py`: batch job comparing decision-log impressions against pacing counters and campaign delivery; reports discrepancies (there will be some, per Phase 5's known flaw) with tolerances.
-- [ ] Retraining path: `make retrain` builds training data from decision logs (not the original synthetic history), producing a candidate model version with an eval report comparing it to live.
+- [ ] Retraining path: `make retrain` builds training data from decision logs (not the original synthetic history), producing a candidate model version with an eval report comparing it to live. **Forward pointer from Phase 4:** real-time (Redis) features were structurally excluded from every Phase 4 model config — no historical log of past Redis state existed to join against synthetic-history impressions. Once the decision log (Phase 5) is capturing per-request feature values (including real-time ones) at serving time, this is the natural point to add Redis-backed features (e.g. `user_session_active`, `user_current_ride_type`) to a pinned feature list; `ranking/train.py` needs no code change for this, only a feature-list config addition.
 - [ ] Experiment readout: small notebook/script computing per-arm CTR with confidence intervals from the decision log, joined on logged assignment. README note (not code) on why observational CTR comparisons across arms are trustworthy here (randomized assignment) and what would break trust (assignment drift, logging loss) — plus a paragraph mapping this to incrementality/lift measurement for brand campaigns, which is out of build scope.
 
 **Acceptance criteria:**
