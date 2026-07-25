@@ -331,3 +331,92 @@ it. 138 tests total, all passing against live infra.
 **Not addressed / deferred:** none — Phase 3 is the last phase in the
 current locked spec's feature-serving arc; Phase 4 (ranking/training)
 begins consuming this service.
+
+## Phase 4 — Ranking: training pipeline, model registry, scorer (`phase-4`)
+
+**Built:** `common/crosses.py` (`x_user_ctr_in_ad_category`, the one cross
+feature the spec names explicitly). `ranking/model.py`'s `PctrModel` —
+wraps any fitted scikit-learn-API estimator behind
+`predict(feature_dict) -> float` / `feature_names()`, pickled directly
+(stdlib `pickle`). `ranking/model_registry.py` + `promote.py` —
+`models/registry.json`, `promote()`/rollback = promote an older version
+again. `ranking/assemble.py` — `from_offline_row()` / `from_online_result()`
+adapters normalizing `offline_store` rows and `feature_service.resolver`
+results down to the same plain dict before handing off to
+`common/crosses.py`. `ranking/train.py` — `backfill()` runs Phase 1's
+`batch_features.runner.run()` in a loop across the training window
+(untouched Phase 1 code, idempotent), builds a point-in-time training
+matrix via per-day joins, trains `V1_CONFIG` (`LogisticRegression` in a
+`StandardScaler` pipeline) and `V2_CONFIG`
+(`HistGradientBoostingClassifier`, a different feature list). `ranking/
+scorer.py` — loads whichever version is `live`, validates its pinned
+feature list (registry name, `hour_of_day`, or a defined cross feature),
+imports no ML library. `make train`. All 6 build items and all 6
+acceptance criteria checked off in `phases.md`. 179 tests total, all
+passing against live infra.
+
+**Decisions made (not previously locked in `CLAUDE.md`/`phases.md`):**
+- **Real-time features excluded from every model config — a data
+  limitation, not a design choice.** Redis (Phase 2) state is TTL'd and
+  ephemeral; there's no historical log of past Redis values to join
+  against a 20-day-old synthetic impression. Flagged explicitly in
+  `ranking/README.md` and as a forward-pointer note in `phases.md`'s
+  Phase 6 retraining build item: once the Phase 5 decision log is
+  capturing real-time feature values at serving time, that's the natural
+  point to add them to a pinned feature list — no `train.py` code change
+  needed, only a config addition.
+- **Time split is a fixed calendar split, not random:** the first 7 days
+  of the 30-day synthetic window are excluded as a feature warm-up buffer
+  (confirmed directly: the very first day's row-count quality gate fails
+  outright with 0/50 users represented — trailing windows there are
+  essentially empty); of the remaining ~23 days, the last 5 are holdout.
+  This, plus a `--seed` threaded into the estimator's `random_state`, is
+  what makes AC1's reproducibility a property of the design rather than
+  something enforced after the fact.
+- **`hour_of_day` is the only context feature built** — "slot" from the
+  spec's context-feature example has no concept this project's datagen
+  actually produces, so it's dropped rather than invented.
+- **`scorer.py` imports `common/crosses.py` to validate a model's pinned
+  `x_`-prefixed names, not to compute them.** Actual cross-feature
+  computation happens in `ranking/assemble.py`, used by `train.py`'s
+  offline path now and, eventually, Phase 5's serving path — that's where
+  the spec's "single implementation is the defense against
+  training-serving skew" actually lives, not inside the scorer itself
+  (which only ever sees an already-assembled feature dict, consistent
+  with its opacity role).
+
+**Deviations, diagnosed and fixed:**
+- **`offline_store` rows can carry `null` for a windowed feature with no
+  data yet — `train.py` fed that straight to sklearn as `NaN` on the
+  first end-to-end run, and `LogisticRegression` doesn't accept it.**
+  Root cause: `feature_service.resolver` substitutes the registry default
+  for exactly this case at *read* time (Phase 3's convention), but
+  `train.py` reads `offline_store` directly rather than going through the
+  service, so it never got that substitution. Fixed by
+  `_fill_registry_defaults()`, applying the identical defaults policy
+  before assembly — not a new policy, the same one `feature_service`
+  already implements.
+- **Unscaled features caused an `lbfgs` convergence warning.**
+  `user_impressions_7d` runs in the hundreds while the CTR features are
+  0-1 — `LogisticRegression` without scaling failed to converge within
+  its default iteration budget. Fixed by wrapping v1 in a
+  `StandardScaler` → `LogisticRegression` pipeline; `PctrModel` doesn't
+  need to know or care, since a `Pipeline` still implements
+  `.predict_proba(X)`.
+- **A raw-string opacity check false-positived on its own module's
+  docstring, twice** (once in `tests/test_scorer.py`'s "no ML import"
+  check, once in `tests/test_acceptance.py`'s "no branching on algorithm"
+  check) — both modules' own docstrings mention "sklearn"/"algorithm" in
+  prose, which a substring search can't distinguish from a real
+  import/branch. Fixed by switching both checks to AST-based inspection
+  (parsed `Import`/`ImportFrom` nodes for the library check; `ast.If`'s
+  `.test` expression for the branching check) — a good example of why a
+  test failing isn't automatically the code's bug; this one was the
+  test's own overly-blunt method.
+
+**Not addressed / deferred:** the A/B arm split and the actual serving
+integration (Phase 5's `POST /serve`) don't exist yet, so AC5's opacity
+proof is verified up through `score()`, not through a live A/B path;
+AC6's "serving path" means `feature_service` (Phase 3), since Phase 5's ad
+server — the real eventual caller of `assemble.py` — isn't built yet
+either. Both are explicitly Phase 5's territory, not gaps in Phase 4.
