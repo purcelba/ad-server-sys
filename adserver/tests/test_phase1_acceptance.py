@@ -11,9 +11,11 @@ import shutil
 import polars as pl
 import pytest
 
+from adserver.batch_features.jobs.ad_impressions import AdImpressionsJob
 from adserver.batch_features.jobs.user_ctr import UserCtrJob
 from adserver.batch_features.materialize import TABLE_NAME, get_resource
 from adserver.batch_features.offline_store import query_as_of
+from adserver.batch_features.quality import QualityGateError
 from adserver.batch_features.runner import DEFAULT_REGISTRY_PATH, run
 from adserver.common.registry import load_registry
 from adserver.datagen.users import HISTORY_END
@@ -212,3 +214,135 @@ def test_ac2_point_in_time_query_never_leaks_future_data(tmp_path):
     still_day15 = query_as_of("user", AS_OF_DAY_15, output_dir)
     still_ctr = still_day15.filter(still_day15["user_id"] == "u_test")["user_ctr_30d"].item()
     assert still_ctr == 1.0, "a later partition being written must not change what an earlier as_of query returns"
+
+
+# --- AC3: poisoning test ---
+# "corrupt a day's events (inject 50% nulls) -> pipeline fails at the
+# quality gate and does NOT materialize."
+#
+# Diagnosed before building this: on the real 30-day dataset, corrupting
+# one day at 50% nulls does NOT trip either quality check (verified
+# directly - see PROGRESS.md) - a single day is too small a fraction of
+# any job's window at that data volume. So this uses a small, deliberately
+# sized synthetic dataset (same rigor as AC2) where the corruption's impact
+# is large enough relative to the window to be provably caught, rather than
+# asserting a threshold-tuning change to production code as part of this
+# acceptance test.
+
+WINDOW_AS_OF = dt.date(2026, 2, 7)  # 7-day window: 2026-02-01 .. 2026-02-07
+CORRUPT_DAY = dt.date(2026, 2, 4)   # the single day whose events get poisoned
+
+
+def _write_poisoning_dataset(data_dir, corrupt: bool, suffix: str):
+    """2 campaigns (c_1_<suffix>, c_2_<suffix>), both eligible, with their
+    entire week's impressions concentrated on CORRUPT_DAY. When
+    `corrupt=True`, 50% of that day's events (c_1's two rows) have
+    campaign_id nulled - c_1 should vanish from ad_impressions_7d's
+    output entirely.
+
+    `suffix` makes campaign_ids unique per test invocation so this test
+    can't collide with leftover state in the shared dynamodb-local table
+    from another run (see PROGRESS.md - this bit a mutation test directly).
+    """
+    c1, c2 = f"c_1_{suffix}", f"c_2_{suffix}"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    campaigns = pl.DataFrame(
+        {
+            "campaign_id": [c1, c2], "advertiser_name": ["Advertiser 1", "Advertiser 2"],
+            "category": ["food", "food"], "demand_type": ["auction", "auction"],
+            "bid": [1.0, 1.0], "budget": [100.0, 100.0], "impression_goal": [None, None],
+            "flight_start": [dt.date(2026, 1, 1), dt.date(2026, 1, 1)],
+            "flight_end": [dt.date(2026, 3, 1), dt.date(2026, 3, 1)],
+            "status": ["active", "active"],
+        },
+        schema={
+            "campaign_id": pl.Utf8, "advertiser_name": pl.Utf8, "category": pl.Utf8,
+            "demand_type": pl.Utf8, "bid": pl.Float64, "budget": pl.Float64,
+            "impression_goal": pl.Int64, "flight_start": pl.Date, "flight_end": pl.Date,
+            "status": pl.Utf8,
+        },
+    )
+    campaigns.write_parquet(data_dir / "campaigns.parquet")
+
+    rows = []
+    for i, cid in enumerate([c1, c1, c2, c2]):
+        rows.append(
+            {
+                "event_id": f"e_{i}", "event_type": "impression", "user_id": "u_1",
+                "campaign_id": None if (corrupt and cid == c1) else cid,
+                "category": "food", "segment": "general",
+                "ts": dt.datetime.combine(CORRUPT_DAY, dt.time(10, i)),
+                "event_date": CORRUPT_DAY, "hour_of_day": 10, "click_id": None,
+            }
+        )
+    events = pl.DataFrame(
+        rows,
+        schema={
+            "event_id": pl.Utf8, "event_type": pl.Utf8, "user_id": pl.Utf8, "campaign_id": pl.Utf8,
+            "category": pl.Utf8, "segment": pl.Utf8, "ts": pl.Datetime(time_unit="us"),
+            "event_date": pl.Date, "hour_of_day": pl.Int64, "click_id": pl.Utf8,
+        },
+    )
+    events.write_parquet(data_dir / "events.parquet")
+
+    pl.DataFrame(
+        {"user_id": ["u_1"], "segment": ["general"], "home_metro": ["seattle"], "created_at": [dt.date(2026, 1, 1)]}
+    ).write_parquet(data_dir / "users.parquet")
+
+    pl.DataFrame(
+        {"ride_id": [], "user_id": [], "ts": [], "ride_date": [], "ride_type": []},
+        schema={
+            "ride_id": pl.Utf8, "user_id": pl.Utf8, "ts": pl.Datetime(time_unit="us"),
+            "ride_date": pl.Date, "ride_type": pl.Utf8,
+        },
+    ).write_parquet(data_dir / "rides.parquet")
+
+    return c1, c2
+
+
+def test_ac3_sanity_uncorrupted_dataset_passes_the_gate(tmp_path):
+    """Establishes the baseline: without corruption, this exact dataset
+    shape passes cleanly (2/2 campaigns represented) - so the failure in
+    the next test is provably caused by the corruption, not by the
+    dataset being malformed some other way."""
+    data_dir = tmp_path / "data"
+    c1, c2 = _write_poisoning_dataset(data_dir, corrupt=False, suffix="sanity")
+
+    df = AdImpressionsJob().compute(WINDOW_AS_OF, data_dir=data_dir)
+    assert df.height == 2
+    assert set(df["campaign_id"].to_list()) == {c1, c2}
+
+
+@requires_dynamo
+def test_ac3_poisoned_day_fails_quality_gate_and_does_not_materialize(tmp_path):
+    import uuid
+
+    suffix = uuid.uuid4().hex[:8]
+    data_dir = tmp_path / "data"
+    c1, c2 = _write_poisoning_dataset(data_dir, corrupt=True, suffix=suffix)
+
+    # confirm the corruption is exactly what it claims to be: 50% of
+    # CORRUPT_DAY's events, nothing else touched
+    events = pl.read_parquet(data_dir / "events.parquet")
+    day_events = events.filter(events["event_date"] == CORRUPT_DAY)
+    assert day_events.height == 4
+    assert day_events["campaign_id"].null_count() == 2  # exactly 50%
+
+    output_dir = tmp_path / "features"
+    with pytest.raises(QualityGateError, match="row-count"):
+        run(
+            as_of=WINDOW_AS_OF,
+            data_dir=data_dir,
+            output_dir=output_dir,
+            jobs=[AdImpressionsJob()],
+            materialize_to_dynamo=True,
+        )
+
+    # does NOT materialize: no offline parquet written
+    assert not output_dir.exists()
+
+    # does NOT materialize: nothing reached DynamoDB either
+    items = _scan_all_items()
+    poisoned_keys = [i for i in items if i["entity_key"] in (f"ad#{c1}", f"ad#{c2}")]
+    assert poisoned_keys == [], f"expected no materialized items for {c1}/{c2}, found: {poisoned_keys}"
