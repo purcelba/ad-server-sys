@@ -20,15 +20,19 @@ from pathlib import Path
 import httpx
 import polars as pl
 import pytest
+import redis as redis_lib
+from confluent_kafka import Producer
 from fastapi.testclient import TestClient
 
 from adserver.adserver import pacing
 from adserver.adserver.decision_log import read_decisions
 from adserver.adserver.loadtest import DEFAULT_URL as SERVE_URL
 from adserver.adserver.service import HOUSE_AD_CAMPAIGN_ID, create_app
+from adserver.common.events import TOPIC, SessionEvent
 from adserver.feature_service.resolver import get_redis_client
 from adserver.ranking.model_registry import DEFAULT_REGISTRY_PATH as MODEL_REGISTRY_PATH
 from adserver.ranking.model_registry import load_registry as load_model_registry
+from adserver.tests.test_phase2_acceptance import ConsumerHandle
 
 pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
 
@@ -482,6 +486,98 @@ def test_ac5_ab_assignment_is_deterministic_and_roughly_50_50(tmp_path, running_
         # both real model versions actually got used, not just assigned
         assert {d["model_version"] for d in decisions} == {"v1", "v2"}
     finally:
+        import adserver.adserver.decision_log as decision_log_module
+
+        decision_log_module.log_decision.__defaults__ = original_defaults
+
+
+# ---------------------------------------------------------------------------
+# AC6: emit destination_entered{category: travel} -> within 3s, /serve for
+# that user reflects the real-time feature in the logged feature set and
+# shifts scores toward travel ads (the rule-based boost in scoring.py).
+# ---------------------------------------------------------------------------
+
+
+@requires_infra
+def test_ac6_destination_entered_reflected_within_3s_and_shifts_scores(tmp_path):
+    """A dedicated single-campaign catalog (one untargeted, active travel
+    auction campaign) isolates the boost's effect on a real candidate
+    from real-catalog noise (e.g. c_0025's audience targeting)."""
+    campaign_id = f"c_ac6_{uuid.uuid4().hex[:8]}"
+    today = dt.date.today()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_single_campaign_catalog(
+        data_dir,
+        {
+            "campaign_id": campaign_id,
+            "advertiser_name": "AC6 Test Advertiser",
+            "category": "travel",
+            "demand_type": "auction",
+            "bid": 2.0,
+            "budget": 1000.0,
+            "impression_goal": None,
+            "flight_start": today - dt.timedelta(days=5),
+            "flight_end": today + dt.timedelta(days=5),
+            "status": "active",
+            "targeted_audiences": [],
+        },
+    )
+
+    log_path = tmp_path / "decision_log.jsonl"
+    original_defaults = _redirect_decision_log(log_path)
+    consumer = ConsumerHandle().start()
+    try:
+        app = create_app(data_dir=data_dir)
+        test_client = TestClient(app)
+        test_user = f"u_ac6_{uuid.uuid4().hex[:8]}"
+
+        # baseline: no real-time destination signal yet
+        baseline = test_client.post("/serve", json={"user_id": test_user, "session_id": "ac6-before"})
+        assert baseline.status_code == 200
+        baseline_pctr = next(
+            s["pctr"] for s in read_decisions(log_path)[-1]["scores"] if s["campaign_id"] == campaign_id
+        )
+
+        producer = Producer({"bootstrap.servers": "localhost:9092"})
+        event = SessionEvent(
+            event_id=str(uuid.uuid4()),
+            event_type="destination_entered",
+            user_id=test_user,
+            session_id="ac6-session",
+            ts=dt.datetime.now(),
+            payload={"category": "travel", "geo": "sea"},
+        )
+        publish_time = time.time()
+        producer.produce(TOPIC, value=event.to_json().encode("utf-8"))
+        producer.flush(5)
+
+        redis_client = redis_lib.Redis(host="localhost", port=6379, decode_responses=True)
+        key = f"feature:user:{test_user}:user_current_destination_category"
+        deadline = publish_time + 3.0
+        landed = False
+        while time.time() < deadline:
+            if redis_client.get(key) is not None:
+                landed = True
+                break
+            time.sleep(0.05)
+        assert landed, "destination_entered was not reflected in Redis within 3 seconds"
+
+        after = test_client.post("/serve", json={"user_id": test_user, "session_id": "ac6-after"})
+        assert after.status_code == 200
+        after_decision = read_decisions(log_path)[-1]
+
+        # reflected in the logged feature set
+        travel_score = next(s for s in after_decision["scores"] if s["campaign_id"] == campaign_id)
+        # the feature dict isn't logged raw per-candidate (only pctr/ecpm
+        # are, in "scores") - assert freshness via the feature itself,
+        # fetched the same way the ad server did, for the same user.
+        assert redis_client.get(key) == '"travel"'
+
+        # shifts scores toward the travel ad specifically
+        assert travel_score["pctr"] > baseline_pctr
+    finally:
+        consumer.stop()
         import adserver.adserver.decision_log as decision_log_module
 
         decision_log_module.log_decision.__defaults__ = original_defaults
