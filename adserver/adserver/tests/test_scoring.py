@@ -1,7 +1,9 @@
 import datetime as dt
 
+import pytest
+
 from adserver.adserver.features import FeatureValue
-from adserver.adserver.scoring import score_candidates
+from adserver.adserver.scoring import DESTINATION_MATCH_BOOST, score_candidates
 from adserver.common.audiences import AudienceDef
 
 NOW = dt.datetime(2026, 7, 20, 14, 30)
@@ -53,3 +55,35 @@ def test_feature_value_objects_are_unwrapped_via_assemble():
     candidates = [{"campaign_id": "c_0001", "category": "food", "demand_type": "auction", "bid": 1.0}]
     scored = score_candidates(_FixedScorer(), {}, candidates, ad_features, AUDIENCES, NOW)
     assert scored[0].features["ad_ctr_7d"] == 0.05
+
+
+def _destination(value: str) -> dict:
+    return {"user_current_destination_category": FeatureValue(value=value, freshness_status="fresh")}
+
+
+def test_matching_real_time_destination_boosts_the_score():
+    candidates = [{"campaign_id": "c_travel", "category": "travel", "demand_type": "auction", "bid": 1.0}]
+    scored = score_candidates(_FixedScorer(), _destination("travel"), candidates, {}, AUDIENCES, NOW)
+    assert scored[0].pctr == pytest.approx(0.1 * DESTINATION_MATCH_BOOST)
+
+
+def test_non_matching_destination_does_not_boost():
+    candidates = [{"campaign_id": "c_travel", "category": "travel", "demand_type": "auction", "bid": 1.0}]
+    scored = score_candidates(_FixedScorer(), _destination("food"), candidates, {}, AUDIENCES, NOW)
+    assert scored[0].pctr == 0.1
+
+
+def test_empty_destination_does_not_boost():
+    candidates = [{"campaign_id": "c_travel", "category": "travel", "demand_type": "auction", "bid": 1.0}]
+    scored = score_candidates(_FixedScorer(), _destination(""), candidates, {}, AUDIENCES, NOW)
+    assert scored[0].pctr == 0.1
+
+
+def test_boost_is_clamped_to_a_valid_probability():
+    class _HighScorer:
+        def score(self, feature_dict):
+            return 0.9
+
+    candidates = [{"campaign_id": "c_travel", "category": "travel", "demand_type": "auction", "bid": 1.0}]
+    scored = score_candidates(_HighScorer(), _destination("travel"), candidates, {}, AUDIENCES, NOW)
+    assert scored[0].pctr == 1.0
