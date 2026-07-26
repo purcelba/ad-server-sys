@@ -563,3 +563,98 @@ process).
 acceptance criterion is checked off. Phase 6 (measurement loop:
 reconciliation, retraining, experiment readout) begins consuming this
 phase's decision log.
+
+## Phase 6 — Measurement loop: reconciliation, retraining, experiment readout (`phase-6`)
+
+**Built:** `ops/outcomes.py` (`simulate_click()` — no click-tracking
+exists anywhere in this project, so both consumers below retroactively
+label a logged decision using `datagen/lifts.py::click_probability()`,
+the exact generative model behind Phase 0's synthetic history; one shared
+implementation so the two paths can never diverge on what counts as a
+click); `ops/reconcile.py` (`make reconcile` — compares pacing's Redis
+counters against the decision log's actual per-campaign win counts,
+surfacing Phase 5 AC4's documented best-effort-pacing drift rather than
+hiding it); `ranking/retrain.py` (`make retrain` — trains a `v3`
+candidate directly from the decision log instead of synthetic history,
+since each logged decision already carries the exact feature dict, real-
+time features included, that produced its scores; one training row per
+decision whose winner is a real, scored campaign; fixed-seed random
+80/20 holdout split; feature set is `V1_CONFIG` plus `user_session_active`
+cast to 0/1; eval report includes an AUC comparison against whichever
+version is currently `live`); `ops/readout.py` (`make readout` — per-arm
+CTR + Wilson-score 95% CI from the decision log, plus the trust/
+incrementality writeup `phases.md` asked for); `ops/README.md`. All 3
+build items and all 3 acceptance criteria checked off in `phases.md`.
+277 tests total, all passing against live infra.
+
+**Required amendments to already-tagged code (both flagged before
+making the change):**
+- `adserver/adserver/service.py`'s decision log only recorded each
+  scored candidate's `pctr`/`ecpm`, not the assembled feature dict that
+  produced them — matched what Phase 5's own build item asked for but
+  wasn't implemented. Without it, `retrain.py` can't reconstruct
+  real-time feature values at all, the entire point of training from
+  decisions instead of synthetic history. Fixed by adding the
+  already-computed `features` dict (`scoring.ScoredCandidate.features`)
+  to each scored entry logged — purely additive, doesn't change the
+  existing `"scores"` shape for any other reader.
+- `adserver/adserver/features.py` had dropped `user_session_active` from
+  `USER_FEATURE_NAMES` during Phase 5 (an unused real-time feature,
+  trimmed to stay under the 20ms feature-fetch budget) — which meant it
+  would never appear in the decision log at all, blocking the retrain
+  config's planned fulfillment of Phase 4's forward pointer about
+  real-time features becoming trainable. Flagged via `AskUserQuestion`;
+  confirmed adding it back (one more per-feature DynamoDB round trip
+  accepted as the cost) over dropping it from the retrain config.
+
+**Decisions made:**
+- **Click labels are simulated, not real**, reusing Phase 0's exact
+  generative model (`datagen/lifts.py::click_probability`) rather than
+  inventing a new one — confirmed via `AskUserQuestion` during planning.
+  Documented everywhere (`ops/outcomes.py`'s docstring, `ops/README.md`)
+  as simulated feedback standing in for a click-tracking pipeline this
+  project never built.
+- **`retrain.py` only trains on auction-demand wins, never guaranteed
+  campaign wins — a modeling choice, not a gap.** Guaranteed campaigns
+  are never run through `score_candidates()` at serving time (they win
+  by pacing-schedule urgency, not pCTR), so no feature dict exists for
+  them to train on — matching how a real ads system's pCTR model only
+  ranks the demand it actually ranks.
+- **A discovered structural fact about this catalog's demand mix, not a
+  bug:** against the real campaign catalog, guaranteed campaigns win
+  almost every slot (any behind-schedule guaranteed candidate preempts
+  auction outright, per Phase 5's locked yield-arbitration rule — see
+  `adserver/adserver/pacing.py::arbitrate()`), and the external bidder
+  stub (bids $0.50–$6.00, always responds) usually outbids thin internal
+  eCPM even when auction gets a turn. Real traffic through `/serve`
+  against the real catalog + real bidder produced **zero** usable
+  training rows for AC2. Proving AC2 required a dedicated demo setup —
+  an auction-only campaign catalog (a filtered copy of the real
+  `campaigns.parquet`, real campaign IDs so `feature_service` already had
+  their features materialized) plus a dedicated `bidder_stub` instance
+  configured `BIDDER_FAILURE_RATE=1.0` — the same "dedicated test
+  catalog" and "controllable dependency" precedents Phase 5's own AC3/
+  AC6 and AC2b already established, no serving-pipeline code touched.
+  Real traffic (2,700 requests) against that setup produced 2,644 usable
+  rows; `make retrain` trained `v3` (AUC 0.581 vs. live `v1`'s 0.553 on
+  the identical holdout), registered as a `candidate` in
+  `models/registry.json`. AC1 (reconciliation) and AC3 (readout) were
+  proven separately against the real catalog's own real decision log
+  (3,600 requests, 22 campaigns touched, `control`/`treatment` arms both
+  represented) — this demand-mix finding is specific to what "the model
+  actually gets to rank" looks like in this catalog, not a limitation of
+  `retrain.py` itself.
+- **AC3's planted-difference test is a synthetic fixture, not organic
+  traffic**, matching Phase 5 AC4's "verify the mechanism, don't hope"
+  precedent: 5,000 decisions split into two arms with a real ~10x CTR
+  gap (a 0.3x-lift pairing vs. a 3.0x-lift pairing, per `datagen/
+  lifts.py`'s planted table) proves the readout script's own CI-overlap
+  check actually detects a real difference, rather than trusting that
+  two model versions' emergent ranking differences would happen to
+  produce a detectable gap in real traffic.
+
+**Not addressed / deferred:** the second Phase 4 forward pointer (a
+model config using static ad attributes — `category`, `advertiser_name`
+— compared against the live version's AUC) was explicitly out of the
+approved Phase 6 plan's scope and not pursued this phase; still open in
+`phases.md`'s Phase 6 build item for a future pass.
