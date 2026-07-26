@@ -5,16 +5,22 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from adserver.adserver.decision_log import read_decisions
 from adserver.adserver.loadtest import DEFAULT_URL as SERVE_URL
+from adserver.adserver.service import HOUSE_AD_CAMPAIGN_ID, create_app
 from adserver.feature_service.resolver import get_redis_client
 from adserver.ranking.model_registry import DEFAULT_REGISTRY_PATH as MODEL_REGISTRY_PATH
 from adserver.ranking.model_registry import load_registry as load_model_registry
@@ -135,3 +141,142 @@ def test_ac1_load_test_50_rps_and_per_stage_latencies_visible(running_ad_server)
     for stage in ["retrieval", "features", "scoring", "bidder", "total"]:
         assert stage in stage_latency
         assert stage_latency[stage]["latency_ms_avg"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# AC2: failure-mode tests — stop Redis, force bidder timeout, remove the
+# model artifact. No request returns a 500 in any of the three.
+# ---------------------------------------------------------------------------
+
+
+def _redirect_decision_log(log_path: Path):
+    """`log_decision(entry, path=DEFAULT_LOG_PATH)`'s default is bound at
+    function-definition time — patching the `DEFAULT_LOG_PATH` module
+    attribute afterward doesn't change what a call omitting `path=`
+    actually uses. Mutate the function object's own `__defaults__`
+    directly instead. Returns the original defaults tuple to restore."""
+    import adserver.adserver.decision_log as decision_log_module
+
+    original_defaults = decision_log_module.log_decision.__defaults__
+    decision_log_module.log_decision.__defaults__ = (log_path,)
+    return original_defaults
+
+
+def _wait_for_redis_healthy(timeout_s: float = 30.0) -> None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if _infra_reachable():
+            return
+        time.sleep(0.5)
+    pytest.fail("redis did not come back healthy in time")
+
+
+@requires_infra
+def test_ac2a_redis_down_serves_popularity_fallback_no_500(running_ad_server):
+    _warm_up(f"{running_ad_server}/serve")
+
+    subprocess.run(["docker", "compose", "stop", "redis"], check=True, capture_output=True)
+    try:
+        resp = httpx.post(f"{running_ad_server}/serve", json={"user_id": "u_0001", "session_id": "s1"}, timeout=10.0)
+        assert resp.status_code == 200
+        body = resp.json()
+        # whichever dependency call fails first when Redis is down (the
+        # user feature fetch, since feature_service's own real-time-
+        # feature Redis read has no try/except around it either — or
+        # pacing's own direct Redis calls in retrieval) - either way it's
+        # the same cached-popularity rung, per the degradation ladder.
+        assert body["fallback_rung"] in {
+            "feature_service_down_popularity_fallback",
+            "redis_down_popularity_fallback",
+        }
+    finally:
+        subprocess.run(["docker", "compose", "start", "redis"], check=True, capture_output=True)
+        _wait_for_redis_healthy()
+
+
+@requires_infra
+def test_ac2b_bidder_timeout_falls_back_to_internal_auction_no_500(tmp_path, running_feature_service):
+    """A dedicated bidder_stub, configured to always respond slower than
+    the ad server's 30ms budget, on its own port — doesn't touch the
+    shared running_bidder_stub other tests use."""
+    slow_bidder_port = 8014
+    env = {
+        **os.environ,
+        "BIDDER_STUB_PORT": str(slow_bidder_port),
+        "BIDDER_LATENCY_MEAN_MS": "200",
+        "BIDDER_LATENCY_STD_MS": "5",
+    }
+    bidder_proc = subprocess.Popen(
+        [sys.executable, "-m", "adserver.bidder_stub.service"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.time() + 30
+    healthy = False
+    while time.time() < deadline:
+        try:
+            if httpx.get(f"http://localhost:{slow_bidder_port}/health", timeout=1.0).status_code == 200:
+                healthy = True
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.3)
+    if not healthy:
+        bidder_proc.terminate()
+        pytest.fail("dedicated slow bidder_stub did not become healthy in time")
+
+    log_path = tmp_path / "decision_log.jsonl"
+    original_defaults = _redirect_decision_log(log_path)
+    try:
+        app = create_app(bidder_url=f"http://localhost:{slow_bidder_port}/bid")
+        test_client = TestClient(app)
+        resp = test_client.post("/serve", json={"user_id": "u_0001", "session_id": "s1"})
+        assert resp.status_code == 200
+
+        decisions = read_decisions(log_path)
+        assert decisions[-1]["external_bid_outcome"] == "timeout_or_error"
+        assert decisions[-1]["external_bid"] is None
+    finally:
+        import adserver.adserver.decision_log as decision_log_module
+
+        decision_log_module.log_decision.__defaults__ = original_defaults
+        bidder_proc.terminate()
+        bidder_proc.wait(timeout=10)
+
+
+@requires_infra
+def test_ac2c_model_artifact_missing_serves_house_ad_no_500(
+    tmp_path, monkeypatch, running_feature_service, running_bidder_stub
+):
+    """Simulates the live model artifact being unavailable at startup
+    (removed, corrupt, fails to unpickle) by making every
+    Scorer(version=...) construction raise — service.py must still start
+    and serve the house ad for every request, never crash."""
+    from adserver.ranking import scorer as scorer_module
+
+    def _always_raise(*args, **kwargs):
+        raise scorer_module.ScorerError("simulated model load failure")
+
+    monkeypatch.setattr(scorer_module, "Scorer", _always_raise)
+    import adserver.adserver.service as service_module
+
+    monkeypatch.setattr(service_module, "Scorer", _always_raise)
+
+    log_path = tmp_path / "decision_log.jsonl"
+    original_defaults = _redirect_decision_log(log_path)
+    try:
+        app = create_app()
+        test_client = TestClient(app)
+        resp = test_client.post("/serve", json={"user_id": "u_0001", "session_id": "s1"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["winner_campaign_id"] == HOUSE_AD_CAMPAIGN_ID
+        assert body["fallback_rung"] == "model_load_failure_house_ad"
+
+        decisions = read_decisions(log_path)
+        assert decisions[-1]["rung"] == "model_load_failure_house_ad"
+    finally:
+        import adserver.adserver.decision_log as decision_log_module
+
+        decision_log_module.log_decision.__defaults__ = original_defaults

@@ -116,7 +116,7 @@ async def _lifespan(_: FastAPI):
     yield
 
 
-def create_app(data_dir: Path = Path("data")) -> FastAPI:
+def create_app(data_dir: Path = Path("data"), bidder_url: str = BIDDER_URL) -> FastAPI:
     # A full cyclic-GC pass mid-request was Phase 3's dominant source of
     # tail latency under load for feature_service - same fix here: this
     # service allocates almost no reference cycles per request (plain
@@ -277,7 +277,7 @@ def create_app(data_dir: Path = Path("data")) -> FastAPI:
         external_bid_outcome = "no_bid"
         try:
             resp = http_client.post(
-                BIDDER_URL,
+                bidder_url,
                 json={"request_id": request_id, "user_id": req.user_id, "slot": req.slot},
                 timeout=BIDDER_TIMEOUT_S,
             )

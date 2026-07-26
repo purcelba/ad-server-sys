@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from adserver.bidder_stub.metrics import Metrics
 
-HTTP_PORT = 8004
+HTTP_PORT = int(os.environ.get("BIDDER_STUB_PORT", 8004))
 
 DEFAULT_LATENCY_MEAN_MS = float(os.environ.get("BIDDER_LATENCY_MEAN_MS", 10.0))
 DEFAULT_LATENCY_STD_MS = float(os.environ.get("BIDDER_LATENCY_STD_MS", 5.0))
