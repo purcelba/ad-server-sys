@@ -156,7 +156,17 @@ def _build_rows(impressions: pl.DataFrame, output_dir: Path) -> list[dict[str, A
                 continue  # no materialized features for this entity on this day - skip, never fabricate
             features = from_offline_row(_fill_registry_defaults(user_row), _fill_registry_defaults(ad_row), imp["category"])
             features["hour_of_day"] = imp["hour_of_day"]
-            rows.append({"features": features, "label": int(imp["label"]), "event_date": event_date})
+            rows.append(
+                {
+                    "features": features,
+                    "label": int(imp["label"]),
+                    "event_date": event_date,
+                    # kept alongside, not inside, "features" - this is provenance for
+                    # analysis (e.g. eval_plots.py's per-category calibration), not a
+                    # model input; _matrix() only ever reads config["feature_names"].
+                    "category": imp["category"],
+                }
+            )
     return rows
 
 
