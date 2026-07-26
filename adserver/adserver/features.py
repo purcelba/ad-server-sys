@@ -17,15 +17,20 @@ import httpx
 FEATURE_SERVICE_URL = "http://localhost:8003/features"
 
 USER_FEATURE_NAMES = [
+    # pinned by V1_CONFIG/V2_CONFIG or the cross features (scoring.py)
     "user_ctr_30d",
     "user_ctr_by_category_30d",
     "user_impressions_7d",
     "user_rides_per_week",
     "user_account_age_days",
     "audience_memberships",
-    "user_session_active",
+    # real-time - not a pinned model input yet (Phase 4's documented
+    # limitation), but AC6's freshness test needs this one specifically
+    # logged with its freshness_status. user_session_active and
+    # user_current_ride_type are dropped: nothing reads them, and each
+    # extra name is another per-feature DynamoDB round trip inside this
+    # 20ms budget (see features.py's/service.py's latency notes).
     "user_current_destination_category",
-    "user_current_ride_type",
 ]
 AD_FEATURE_NAMES = ["ad_ctr_7d", "ad_ctr_30d", "ad_impressions_7d", "campaign_spend_yesterday"]
 
