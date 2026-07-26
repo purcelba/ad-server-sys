@@ -1,4 +1,4 @@
-.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train eval-plots serve-ads loadtest-serve serve-bidder
+.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train eval-plots serve-ads loadtest-serve serve-bidder reconcile retrain readout
 
 up:
 	docker compose up -d
@@ -59,3 +59,6 @@ serve-ads: features
 
 loadtest-serve:
 	uv run python -m adserver.adserver.loadtest
+
+reconcile:
+	uv run python -m adserver.ops.reconcile
