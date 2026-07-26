@@ -54,15 +54,27 @@ class Scorer:
         logical_name: str = LOGICAL_NAME,
         model_registry_path: Path = model_registry.DEFAULT_REGISTRY_PATH,
         feature_registry_path: Path = DEFAULT_FEATURE_REGISTRY_PATH,
+        version: str | None = None,
     ):
-        live_path = Path(model_registry.get_live_path(logical_name, model_registry_path))
+        """`version`, if given, bypasses the `live` pointer entirely and
+        loads that specific version instead — Phase 5's A/B assignment
+        needs two specific versions loaded simultaneously (e.g. arm
+        control -> v1, arm treatment -> v2), independent of whichever one
+        is currently live. Additive, backward-compatible change to
+        already-tagged phase-4 code (default None preserves the original
+        "whichever is live" behavior); flagged per CLAUDE.md's standing
+        instruction."""
+        if version is not None:
+            resolved_path = Path(model_registry.get_version_path(logical_name, version, model_registry_path))
+        else:
+            resolved_path = Path(model_registry.get_live_path(logical_name, model_registry_path))
         feature_registry = load_registry(feature_registry_path)
 
-        model = PctrModel.load(live_path / "model.pkl")
+        model = PctrModel.load(resolved_path / "model.pkl")
         _validate_feature_names(model.feature_names(), feature_registry)
 
         self._model = model
-        self.version_path = live_path
+        self.version_path = resolved_path
 
     def score(self, feature_dict: dict[str, Any]) -> float:
         return self._model.predict(feature_dict)

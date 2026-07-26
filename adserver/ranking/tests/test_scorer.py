@@ -56,6 +56,29 @@ def test_scorer_refuses_to_load_a_model_with_an_unregistered_feature(registries)
         Scorer(model_registry_path=registries["model_registry_path"])
 
 
+def test_scorer_with_explicit_version_bypasses_the_live_pointer(registries):
+    _register_fake_model(
+        registries["models_dir"], registries["model_registry_path"], "v1", ["hour_of_day"], status="live"
+    )
+    _register_fake_model(
+        registries["models_dir"], registries["model_registry_path"], "v2", ["user_ctr_30d"], status="candidate"
+    )
+
+    live_scorer = Scorer(model_registry_path=registries["model_registry_path"])
+    pinned_scorer = Scorer(model_registry_path=registries["model_registry_path"], version="v2")
+
+    assert live_scorer.feature_names() == ["hour_of_day"]
+    assert pinned_scorer.feature_names() == ["user_ctr_30d"]
+
+
+def test_scorer_with_explicit_version_still_validates_feature_names(registries):
+    _register_fake_model(
+        registries["models_dir"], registries["model_registry_path"], "v1", ["not_a_real_feature"], status="candidate"
+    )
+    with pytest.raises(ScorerError, match="not_a_real_feature"):
+        Scorer(model_registry_path=registries["model_registry_path"], version="v1")
+
+
 def test_scorer_module_imports_no_ml_library():
     """Static AST check for AC5's opacity proof: the scorer must never
     import scikit-learn (or any ML library) directly — it only unpickles

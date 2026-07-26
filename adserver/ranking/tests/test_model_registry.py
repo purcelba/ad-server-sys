@@ -5,6 +5,7 @@ import pytest
 from adserver.ranking.model_registry import (
     ModelRegistryError,
     get_live_path,
+    get_version_path,
     load_registry,
     promote,
     register_version,
@@ -70,3 +71,15 @@ def test_rollback_is_just_promoting_the_older_version_again(registry_path):
 def test_promote_unregistered_version_raises(registry_path):
     with pytest.raises(ModelRegistryError, match="v9"):
         promote("pctr", "v9", registry_path)
+
+
+def test_get_version_path_returns_a_non_live_version(registry_path):
+    register_version("pctr", "v1", "models/pctr/v1", status="live", path=registry_path)
+    register_version("pctr", "v2", "models/pctr/v2", status="candidate", path=registry_path)
+    assert get_version_path("pctr", "v2", registry_path) == Path("models/pctr/v2")
+
+
+def test_get_version_path_raises_for_an_unregistered_version(registry_path):
+    register_version("pctr", "v1", "models/pctr/v1", status="live", path=registry_path)
+    with pytest.raises(ModelRegistryError, match="v9"):
+        get_version_path("pctr", "v9", registry_path)

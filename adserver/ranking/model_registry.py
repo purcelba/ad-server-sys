@@ -78,3 +78,15 @@ def get_live_path(logical_name: str, path: Path = DEFAULT_REGISTRY_PATH) -> Path
         raise ModelRegistryError(f"multiple live versions for {logical_name!r}: {live_versions}")
 
     return Path(entries[live_versions[0]]["path"])
+
+
+def get_version_path(logical_name: str, version: str, path: Path = DEFAULT_REGISTRY_PATH) -> Path:
+    """Looks up a *specific* version's path regardless of its status —
+    used by Phase 5's A/B assignment, which pins two versions
+    simultaneously (e.g. arm control -> v1, arm treatment -> v2)
+    independent of whichever one happens to be `live`."""
+    registry = load_registry(path)
+    entries = registry.get(logical_name, {})
+    if version not in entries:
+        raise ModelRegistryError(f"{logical_name!r} version {version!r} is not registered")
+    return Path(entries[version]["path"])
