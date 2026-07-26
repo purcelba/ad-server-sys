@@ -62,3 +62,6 @@ loadtest-serve:
 
 reconcile:
 	uv run python -m adserver.ops.reconcile
+
+retrain:
+	uv run python -m adserver.ranking.retrain
