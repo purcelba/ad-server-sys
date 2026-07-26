@@ -65,3 +65,6 @@ reconcile:
 
 retrain:
 	uv run python -m adserver.ranking.retrain
+
+readout:
+	uv run python -m adserver.ops.readout
