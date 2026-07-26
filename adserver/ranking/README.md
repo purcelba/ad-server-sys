@@ -87,7 +87,15 @@ make train                                          # backfills + trains v1, wri
 uv run python -m adserver.ranking.train --version v2  # trains v2 too
 uv run python -m adserver.ranking.promote pctr v1    # v1 -> live
 uv run python -m adserver.ranking.promote pctr v2    # promote v2 (rollback: promote v1 again)
+make eval-plots                                      # writes models/pctr/v{live}/eval_plot.png
 ```
+
+**`eval_plots.py`** is an ad-hoc validation diagnostic (not a `phases.md`
+acceptance criterion): observed CTR by ad category on the holdout window
+(context — does the underlying data look like real signal), and predicted
+vs. actual CTR per calibration-curve decile bin (does "the model says 3%"
+actually mean ~3% of those impressions get clicked?). Reuses
+`eval_report.json`'s already-computed calibration curve — no retraining.
 
 ## Production analog
 This is the local stand-in for a training pipeline + model registry — e.g.

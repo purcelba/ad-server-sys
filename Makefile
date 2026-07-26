@@ -1,4 +1,4 @@
-.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train
+.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train eval-plots
 
 up:
 	docker compose up -d
@@ -47,3 +47,6 @@ loadtest-features:
 
 train: demo
 	uv run python -m adserver.ranking.train --version v1
+
+eval-plots:
+	uv run python -m adserver.ranking.eval_plots
