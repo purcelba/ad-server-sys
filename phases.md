@@ -164,17 +164,18 @@ model is revisited anyway.
 **Goal:** the centerpiece. A serving endpoint with an explicit SLO, a two-stage pipeline, mixed demand types, pacing state, an external bidder on a timeout, and an observable degradation ladder.
 
 **Build:**
-- [ ] **Written SLO first** (in `adserver/README.md` before code): p99 ≤ 100ms, availability 99.9%, defined degraded modes.
-- [ ] `POST /serve` {user_id, session_id, slot}:
+- [x] **Written SLO first** (in `adserver/README.md` before code): p99 ≤ 100ms, availability 99.9%, defined degraded modes.
+- [x] `POST /serve` {user_id, session_id, slot}:
   1. *Candidate retrieval:* filter eligible campaigns (targeting rules, flight dates, budget/goal remaining) — cheap, no model. **Audience routing rule:** audiences participate here as *eligibility only, and only when purchased* — a campaign that targeted an audience is ineligible for users outside it; a campaign that didn't is unaffected by audience membership. Audiences must never act as system-imposed relevance filters (cliff edges, self-reinforcing data starvation, thinner auctions); relevance flows through scoring. A required code comment at the retrieval filter states this rule and why.
   2. *Feature fetch* from feature service with a 20ms budget.
   3. *Scoring:* pCTR from live model; auction candidates ranked by bid × pCTR (eCPM). Audience *affinity* (as opposed to purchased eligibility) enters here as cross features (e.g. `x_user_in_audience_matching_ad_category`), available to model configs like any other feature — the model learns how much membership should shift scores, including when it shouldn't.
   4. *External demand:* call `bidder_stub/` (configurable latency distribution + failure rate) with a hard 30ms timeout; a returned bid competes in the auction; timeout → internal demand only, logged.
   5. *Yield arbitration:* guaranteed campaigns paced toward impression goals over their flight (simple linear pacing: behind schedule → guaranteed wins the slot; ahead → auction competes). Spend/delivery counters live in Redis, decremented at serve time.
   6. *Degradation ladder* (each rung logged when fired): real-time features stale/missing → serve on batch only; feature service timeout → cached popularity ranking; model failure → house ad. Never a 500 to the caller.
-- [ ] **Decision log = system of record:** one JSON line per request: request_id, ts, experiment arm, candidate set, **audience eligibility outcomes (which campaigns were excluded by which audience, with definition_version)**, per-candidate features + freshness + scores, external bid presence/outcome, winner, price, fallback rung. Written locally, loadable into DuckDB.
-- [ ] **A/B assignment:** hash(user_id, salt) → arm; arm pins model version; assignment logged.
-- [ ] Per-stage latency instrumentation in `/metrics` (retrieval / features / scoring / bidder / total).
+  (Built and unit/manually verified against live infra — end-to-end acceptance criteria 1-7 below are separate, not yet run.)
+- [x] **Decision log = system of record:** one JSON line per request: request_id, ts, experiment arm, candidate set, **audience eligibility outcomes (which campaigns were excluded by which audience, with definition_version)**, per-candidate features + freshness + scores, external bid presence/outcome, winner, price, fallback rung. Written locally, loadable into DuckDB.
+- [x] **A/B assignment:** hash(user_id, salt) → arm; arm pins model version; assignment logged.
+- [x] Per-stage latency instrumentation in `/metrics` (retrieval / features / scoring / bidder / total).
 
 **Key decisions locked:** pacing counters are best-effort (no transactions) — a required test demonstrates the concurrency flaw (two parallel requests both decrement the last budget dollar) and the README explains what production systems do about it. This is a feature of the project, not a bug.
 
