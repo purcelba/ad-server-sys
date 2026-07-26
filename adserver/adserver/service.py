@@ -328,7 +328,13 @@ def create_app(data_dir: Path = Path("data"), bidder_url: str = BIDDER_URL) -> F
                 "candidate_set": [c["campaign_id"] for c in eligible],
                 "audience_exclusions": [dataclasses.asdict(e) for e in audience_exclusions],
                 "scores": [
-                    {"campaign_id": s.campaign_id, "pctr": s.pctr, "ecpm": s.ecpm} for s in scored_auction
+                    {
+                        "campaign_id": s.campaign_id,
+                        "pctr": s.pctr,
+                        "ecpm": s.ecpm,
+                        "features": s.features,
+                    }
+                    for s in scored_auction
                 ],
                 "external_bid_outcome": external_bid_outcome,
                 "external_bid": external_bid,
