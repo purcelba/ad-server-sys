@@ -439,3 +439,49 @@ def test_ac4_two_concurrent_requests_both_decrement_the_last_unit():
     # dangerous in practice: nothing about the counter's own state signals
     # that anything went wrong.
     assert final_remaining == 0.0
+
+
+# ---------------------------------------------------------------------------
+# AC5: two model versions live under A/B; deterministic per-user
+# assignment, logged; ~50/50 traffic over 1,000 requests.
+# ---------------------------------------------------------------------------
+
+
+@requires_infra
+def test_ac5_ab_assignment_is_deterministic_and_roughly_50_50(tmp_path, running_feature_service, running_bidder_stub):
+    from adserver.adserver.experiment import ARM_VERSIONS
+
+    log_path = tmp_path / "decision_log.jsonl"
+    original_defaults = _redirect_decision_log(log_path)
+    try:
+        app = create_app()
+        test_client = TestClient(app)
+
+        # determinism: the same user called twice gets the same arm
+        repeat_user = "u_ac5_repeat"
+        first = test_client.post("/serve", json={"user_id": repeat_user, "session_id": "s1"})
+        second = test_client.post("/serve", json={"user_id": repeat_user, "session_id": "s2"})
+        assert first.json()["experiment_arm"] == second.json()["experiment_arm"]
+
+        # ~50/50 over 1,000 distinct users
+        for i in range(1000):
+            resp = test_client.post("/serve", json={"user_id": f"u_ac5_{i:04d}", "session_id": "ac5"})
+            assert resp.status_code == 200
+
+        decisions = [d for d in read_decisions(log_path) if d["user_id"].startswith("u_ac5_") and d["user_id"] != repeat_user]
+        assert len(decisions) == 1000
+
+        arm_counts = {"control": 0, "treatment": 0}
+        for d in decisions:
+            arm_counts[d["experiment_arm"]] += 1
+            # logged model_version must match the arm's pinned version
+            assert d["model_version"] == ARM_VERSIONS[d["experiment_arm"]]
+
+        control_ratio = arm_counts["control"] / len(decisions)
+        assert 0.4 < control_ratio < 0.6, f"arm split {arm_counts} not roughly 50/50"
+        # both real model versions actually got used, not just assigned
+        assert {d["model_version"] for d in decisions} == {"v1", "v2"}
+    finally:
+        import adserver.adserver.decision_log as decision_log_module
+
+        decision_log_module.log_decision.__defaults__ = original_defaults
