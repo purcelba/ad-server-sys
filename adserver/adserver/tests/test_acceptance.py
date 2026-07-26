@@ -581,3 +581,129 @@ def test_ac6_destination_entered_reflected_within_3s_and_shifts_scores(tmp_path)
         import adserver.adserver.decision_log as decision_log_module
 
         decision_log_module.log_decision.__defaults__ = original_defaults
+
+
+# ---------------------------------------------------------------------------
+# AC7: a campaign targeting frequent_airport_travelers never serves to
+# non-members over 1,000 replayed requests, exclusions visible in the
+# decision log with definition_version; the same non-member user still
+# receives other, non-targeted campaigns — audiences gate eligibility,
+# not relevance.
+# ---------------------------------------------------------------------------
+
+
+@requires_infra
+def test_ac7_audience_targeted_campaign_never_serves_to_non_members(tmp_path):
+    """Uses the real campaign catalog (not a dedicated one) specifically
+    because this AC needs real non-targeted campaigns alongside the one
+    real audience-targeted campaign (c_0025, travel, targets
+    frequent_airport_travelers per datagen/campaigns.py's deterministic
+    targeting) to prove the second half of the claim: exclusion doesn't
+    mean the user gets nothing."""
+    from adserver.common.audiences import load_audiences
+
+    campaigns = pl.read_parquet("data/campaigns.parquet")
+    targeted_rows = campaigns.filter(pl.col("targeted_audiences").list.contains("frequent_airport_travelers"))
+    assert targeted_rows.height == 1, "expected exactly one campaign targeting frequent_airport_travelers"
+    targeted_campaign_id = targeted_rows["campaign_id"][0]
+
+    audiences_path = Path("adserver/common/audiences.yaml")
+    audiences = load_audiences(audiences_path)
+    expected_definition_version = audiences["frequent_airport_travelers"].definition_version
+
+    # discover real membership via feature_service - this project's
+    # synthetic catalog only has 50 users, some of whom are genuinely
+    # members (need both to test both halves of the claim)
+    all_users = [f"u_{i:04d}" for i in range(1, 51)]
+    with httpx.Client() as client:
+        resp = client.post(
+            "http://localhost:8003/features",
+            json={
+                "queries": [
+                    {"entity_type": "user", "entity_id": u, "feature_names": ["audience_memberships"]}
+                    for u in all_users
+                ]
+            },
+            timeout=10.0,
+        )
+    memberships = {r["entity_id"]: r["features"]["audience_memberships"]["value"] for r in resp.json()["results"]}
+    members = [u for u, m in memberships.items() if "frequent_airport_travelers" in m]
+    non_members = [u for u, m in memberships.items() if "frequent_airport_travelers" not in m]
+    assert members, "test fixture assumption broken: expected at least one real member"
+    assert non_members, "test fixture assumption broken: expected at least one real non-member"
+
+    log_path = tmp_path / "decision_log.jsonl"
+    original_defaults = _redirect_decision_log(log_path)
+    import adserver.adserver.service as service_module
+    from adserver.datagen.users import HISTORY_END
+
+    original_clock = service_module._clock
+    try:
+        # pin the clock inside the synthetic catalog's designed window -
+        # flight dates are fixed constants relative to HISTORY_END, not
+        # relative to wall-clock "today", so real "today" can (and, as
+        # discovered building this test, does) fall after some campaigns'
+        # flight_end simply because real time has moved on since the data
+        # was generated. Using real dt.date.today() here would silently
+        # exclude the targeted campaign by flight, not by audience,
+        # invalidating the whole test.
+        service_module._clock = lambda: dt.datetime.combine(HISTORY_END, dt.time(12, 0))
+
+        app = create_app()
+        test_client = TestClient(app)
+
+        for i in range(1000):
+            user_id = non_members[i % len(non_members)]
+            resp = test_client.post("/serve", json={"user_id": user_id, "session_id": "ac7"})
+            assert resp.status_code == 200
+
+        # one member request too, proving eligibility (not just exclusion) works
+        member_resp = test_client.post("/serve", json={"user_id": members[0], "session_id": "ac7-member"})
+        assert member_resp.status_code == 200
+
+        decisions = read_decisions(log_path)
+        non_member_decisions = [d for d in decisions if d["user_id"] in non_members]
+        assert len(non_member_decisions) == 1000
+
+        non_member_served_something = 0
+        exclusions_checked = 0
+        for d in non_member_decisions:
+            # the core safety property holds unconditionally, including on
+            # a degraded (fallback_rung) decision, where retrieval's own
+            # audience-exclusion bookkeeping never runs at all: the
+            # popularity fallback's own eligibility filter still excludes
+            # every audience-targeted campaign outright (see
+            # _eligible_by_catalog_only), since membership can't be
+            # confirmed in that degraded state either.
+            assert targeted_campaign_id not in d.get("candidate_set", []), (
+                f"{d['user_id']} (non-member) had the targeted campaign in its candidate set"
+            )
+            assert d["winner"] != targeted_campaign_id
+
+            if d.get("fallback_rung") is None:
+                # only a normal (non-degraded) decision actually runs
+                # retrieval's own exclusion bookkeeping
+                exclusions = {e["audience"]: e for e in d.get("audience_exclusions", [])}
+                assert "frequent_airport_travelers" in exclusions
+                assert exclusions["frequent_airport_travelers"]["campaign_id"] == targeted_campaign_id
+                assert exclusions["frequent_airport_travelers"]["definition_version"] == expected_definition_version
+                exclusions_checked += 1
+
+            # audiences gate eligibility, not relevance: still served
+            # something else
+            if d["winner"] is not None:
+                non_member_served_something += 1
+
+        assert exclusions_checked > 0, "no non-degraded decision to verify audience_exclusions bookkeeping against"
+
+        assert non_member_served_something > 0, "non-members never received any other campaign at all"
+
+        member_decision = next(d for d in decisions if d["user_id"] == members[0])
+        member_exclusions = {e["audience"] for e in member_decision.get("audience_exclusions", [])}
+        assert "frequent_airport_travelers" not in member_exclusions
+        assert targeted_campaign_id in member_decision.get("candidate_set", [])
+    finally:
+        service_module._clock = original_clock
+        import adserver.adserver.decision_log as decision_log_module
+
+        decision_log_module.log_decision.__defaults__ = original_defaults

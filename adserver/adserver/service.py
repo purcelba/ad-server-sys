@@ -80,13 +80,21 @@ class ServeResponse(BaseModel):
 
 
 def _eligible_by_catalog_only(campaigns: pl.DataFrame, now: dt.date) -> list[dict[str, Any]]:
-    """Status + flight only — no pacing, no audience check. Used only by
-    the Redis-down popularity fallback, which can't reach pacing.py's
-    Redis-backed capacity counters at all."""
+    """Status + flight only — no pacing (can't reach pacing.py's Redis-
+    backed capacity counters in this degraded path) and no *positive*
+    audience check (can't confirm membership without a working feature
+    fetch either). Audience-*targeted* campaigns are still excluded
+    entirely here, though, never included by default: with no reliable
+    way to confirm membership in this degraded state, "unknown" must be
+    treated as "not a member" — the same safe default the audience
+    routing rule already requires, so a transient popularity-fallback
+    rung can never accidentally violate a purchased targeting agreement."""
     return [
         row
         for row in campaigns.to_dicts()
-        if row["status"] == "active" and row["flight_start"] <= now <= row["flight_end"]
+        if row["status"] == "active"
+        and row["flight_start"] <= now <= row["flight_end"]
+        and not row["targeted_audiences"]
     ]
 
 
