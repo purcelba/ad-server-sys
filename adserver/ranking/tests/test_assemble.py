@@ -1,5 +1,14 @@
+from adserver.common.audiences import AudienceDef, Rule
 from adserver.feature_service.resolver import FeatureResult
 from adserver.ranking.assemble import from_offline_row, from_online_result
+
+AUDIENCES = {
+    "frequent_airport_travelers": AudienceDef(
+        name="frequent_airport_travelers",
+        definition_version=1,
+        rules=(Rule(feature="user_ctr_by_category_30d.travel", op="gte", value=0.05),),
+    )
+}
 
 
 def test_from_offline_row_merges_user_and_ad_features_and_adds_the_cross():
@@ -64,4 +73,32 @@ def test_both_adapters_produce_the_same_assembled_dict_for_equivalent_inputs():
 
     assert from_offline_row(offline_row_user, offline_row_ad, "food") == from_online_result(
         online_user, online_ad, "food"
+    )
+
+
+def test_audiences_param_is_optional_and_defaults_to_no_affinity_cross():
+    """Phase 4's existing call sites (train.py, its tests) never pass
+    audiences= — must keep working unchanged."""
+    result = from_offline_row({"user_id": "u_1"}, {"campaign_id": "c_1"}, "travel")
+    assert "x_user_in_audience_matching_ad_category" not in result
+
+
+def test_audiences_param_adds_the_affinity_cross_when_provided():
+    user_row = {"user_id": "u_1", "audience_memberships": ["frequent_airport_travelers"]}
+    result = from_offline_row(user_row, {"campaign_id": "c_1"}, "travel", audiences=AUDIENCES)
+    assert result["x_user_in_audience_matching_ad_category"] is True
+
+
+def test_both_adapters_agree_on_the_affinity_cross_too():
+    offline_row_user = {"user_id": "u_1", "audience_memberships": ["frequent_airport_travelers"]}
+    offline_row_ad = {"campaign_id": "c_1"}
+    online_user = {
+        "audience_memberships": FeatureResult(
+            value=["frequent_airport_travelers"], computed_at="t", freshness_status="fresh", default_substituted=False
+        )
+    }
+    online_ad = {}
+
+    assert from_offline_row(offline_row_user, offline_row_ad, "travel", audiences=AUDIENCES) == from_online_result(
+        online_user, online_ad, "travel", audiences=AUDIENCES
     )

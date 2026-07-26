@@ -13,7 +13,10 @@ shape down to what these functions expect.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from adserver.common.audiences import AudienceDef
 
 
 def x_user_ctr_in_ad_category(user_features: dict[str, Any], ad_category: str) -> float:
@@ -27,10 +30,36 @@ def x_user_ctr_in_ad_category(user_features: dict[str, Any], ad_category: str) -
     return float(by_category.get(ad_category, 0.0))
 
 
+def x_user_in_audience_matching_ad_category(
+    user_features: dict[str, Any], ad_category: str, audiences: dict[str, "AudienceDef"]
+) -> bool:
+    """Audience *affinity* (Phase 5) — distinct from a campaign's
+    purchased *eligibility* targeting (`adserver/adserver/retrieval.py`).
+    True if the user belongs to an audience whose own defining rules
+    reference this ad's specific category (e.g.
+    `frequent_airport_travelers`'s rule on
+    `user_ctr_by_category_30d.travel` matches a `travel` ad). Derived
+    directly from `audiences.yaml`'s own rule definitions rather than a
+    separate hardcoded audience-to-category table, so a newly added
+    audience needs no change here. Available to model configs like any
+    other feature — the model learns how much membership should shift
+    scores, including when it shouldn't; this function doesn't itself
+    decide relevance."""
+    memberships = user_features.get("audience_memberships") or []
+    for name in memberships:
+        audience = audiences.get(name)
+        if audience is None:
+            continue
+        if any(rule.feature == f"user_ctr_by_category_30d.{ad_category}" for rule in audience.rules):
+            return True
+    return False
+
+
 # Every cross function this module defines, keyed by its registry-style
 # name — ranking/scorer.py checks a model's `x_`-prefixed pinned feature
 # names against this, the same enforcement role common/registry.py plays
 # for user/ad features.
 CROSS_FUNCTIONS = {
     "x_user_ctr_in_ad_category": x_user_ctr_in_ad_category,
+    "x_user_in_audience_matching_ad_category": x_user_in_audience_matching_ad_category,
 }
