@@ -58,6 +58,12 @@ threadpoolctl.threadpool_limits(1)
 
 WORKER_COUNT = min(8, multiprocessing.cpu_count())
 
+# A module-level, monkeypatchable clock — same "clock-mockable" pattern
+# Phase 2's TTL test established. AC3's guaranteed-delivery test needs to
+# drive a simulated 10-day flight without waiting 10 real days; tests
+# monkeypatch this function rather than dt.datetime.now() directly.
+_clock = dt.datetime.now
+
 
 class ServeRequest(BaseModel):
     user_id: str
@@ -155,7 +161,7 @@ def create_app(data_dir: Path = Path("data"), bidder_url: str = BIDDER_URL) -> F
     @app.post("/serve", response_model=ServeResponse)
     def serve(req: ServeRequest):
         request_id = str(uuid.uuid4())
-        now = dt.datetime.now()
+        now = _clock()
         start = time.time()
         stage_latencies: dict[str, float] = {}
 

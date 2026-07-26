@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 import re
 import shutil
@@ -12,12 +13,15 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import httpx
+import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
+from adserver.adserver import pacing
 from adserver.adserver.decision_log import read_decisions
 from adserver.adserver.loadtest import DEFAULT_URL as SERVE_URL
 from adserver.adserver.service import HOUSE_AD_CAMPAIGN_ID, create_app
@@ -280,3 +284,100 @@ def test_ac2c_model_artifact_missing_serves_house_ad_no_500(
         import adserver.adserver.decision_log as decision_log_module
 
         decision_log_module.log_decision.__defaults__ = original_defaults
+
+
+# ---------------------------------------------------------------------------
+# AC3: guaranteed delivery — a 1,000-impression goal over a simulated
+# 10-day flight ends within +/-10% of goal under steady traffic, and wins
+# arbitration when behind schedule.
+# ---------------------------------------------------------------------------
+
+_CAMPAIGNS_SCHEMA = {
+    "campaign_id": pl.Utf8,
+    "advertiser_name": pl.Utf8,
+    "category": pl.Utf8,
+    "demand_type": pl.Utf8,
+    "bid": pl.Float64,
+    "budget": pl.Float64,
+    "impression_goal": pl.Int64,
+    "flight_start": pl.Date,
+    "flight_end": pl.Date,
+    "status": pl.Utf8,
+    "targeted_audiences": pl.List(pl.Utf8),
+}
+
+
+def _write_single_campaign_catalog(data_dir: Path, campaign_row: dict) -> None:
+    pl.DataFrame([campaign_row], schema=_CAMPAIGNS_SCHEMA).write_parquet(data_dir / "campaigns.parquet")
+
+
+@requires_infra
+def test_ac3_guaranteed_delivery_within_10_percent_of_goal_over_simulated_flight(
+    tmp_path, running_feature_service, running_bidder_stub
+):
+    """A dedicated single-campaign catalog isolates the guaranteed
+    campaign from real-catalog auction competition, so every simulated
+    request's outcome is directly attributable to this one campaign's
+    pacing behavior — the ONLY campaign that exists, it wins whenever
+    behind schedule and there's no auction alternative to compete with it
+    when it's ahead (per pacing.arbitrate()'s own logic, already
+    unit-tested in test_pacing.py)."""
+    import adserver.adserver.service as service_module
+
+    campaign_id = f"c_ac3_{uuid.uuid4().hex[:8]}"
+    flight_start = dt.date(2026, 1, 1)
+    flight_end = flight_start + dt.timedelta(days=9)  # 10-day flight
+    impression_goal = 1000
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_single_campaign_catalog(
+        data_dir,
+        {
+            "campaign_id": campaign_id,
+            "advertiser_name": "AC3 Test Advertiser",
+            "category": "food",
+            "demand_type": "guaranteed",
+            "bid": None,
+            "budget": None,
+            "impression_goal": impression_goal,
+            "flight_start": flight_start,
+            "flight_end": flight_end,
+            "status": "active",
+            "targeted_audiences": [],
+        },
+    )
+
+    app = create_app(data_dir=data_dir)
+    test_client = TestClient(app)
+    redis_client = get_redis_client()
+    users = [f"u_{i:04d}" for i in range(1, 21)]
+
+    n_days = 10
+    requests_per_day = 150  # comfortably above the ~100/day pace 1000/10 needs
+    behind_schedule_win_confirmed = False
+
+    for day in range(n_days):
+        simulated_now = dt.datetime.combine(flight_start + dt.timedelta(days=day), dt.time(12, 0))
+        service_module._clock = lambda _now=simulated_now: _now
+
+        for i in range(requests_per_day):
+            user_id = users[i % len(users)]
+            resp = test_client.post("/serve", json={"user_id": user_id, "session_id": "ac3-steady-traffic"})
+            assert resp.status_code == 200
+            if day >= 1 and not behind_schedule_win_confirmed:
+                # by day 1+, if this campaign is still behind its linear
+                # schedule, it must win outright (no auction alternative
+                # exists in this catalog to compete with it either way,
+                # but this confirms the winner is specifically it, not
+                # "nothing")
+                if resp.json()["winner_campaign_id"] == campaign_id:
+                    behind_schedule_win_confirmed = True
+
+    service_module._clock = dt.datetime.now  # restore the real clock
+
+    delivered = pacing.get_delivered(redis_client, {"campaign_id": campaign_id})
+    assert behind_schedule_win_confirmed, "campaign never won a slot while behind schedule"
+    assert 0.9 * impression_goal <= delivered <= 1.1 * impression_goal, (
+        f"delivered={delivered}, expected within +/-10% of {impression_goal}"
+    )
