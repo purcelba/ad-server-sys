@@ -141,6 +141,22 @@ A learning project: a miniature real-time ad serving system combining batch and 
 - [x] 5. Opacity proof: train two versions from configs that happen to use different algorithms and feature lists; both flow through the identical registry → promote → score → A/B path with zero code changes anywhere downstream, and the scorer module imports no ML library. Nothing outside the artifact directory reveals which algorithm a version uses. (The A/B path itself is Phase 5's build item — not yet built — so this AC is proven up through score, not through a live A/B split.)
 - [x] 6. Cross-parity test: for sampled (user, ad) pairs, cross features computed in the training path equal those computed in the serving path for the same inputs (same shared module, verified end to end — extends the Phase 3 parity test to derived features). ("Serving path" here means `feature_service` — Phase 5's ad server, which would be the real caller, doesn't exist yet.)
 
+**Deliberately baseline-first — static ad attributes not yet used as
+features.** v1/v2 only use *behavioral* ad features (`ad_ctr_7d`,
+`ad_ctr_30d`, `ad_impressions_7d`, `campaign_spend_yesterday`) plus the one
+category cross feature. Raw campaign attributes that exist in
+`campaigns.parquet` but were never added to the feature registry —
+`category` as a direct (e.g. one-hot) feature, and `advertiser_name` —
+are not used anywhere in the model. This is an intentional decision to
+keep Phase 4's model a clean baseline, not an oversight: the plan is to
+treat this as the base model and, later, measure how much eval AUC
+improves as static ad attributes are added on top of it (register them in
+`common/registry.yaml`, extend a model config's feature list, compare eval
+reports on the identical holdout — exactly the "comparing any two versions
+is one operation" workflow this phase already built). A natural point to
+do this is alongside Phase 6's retraining work, since that's when the
+model is revisited anyway.
+
 ---
 
 ## Phase 5 — Ad server: retrieval, auction, pacing, yield, fallbacks
@@ -179,7 +195,7 @@ A learning project: a miniature real-time ad serving system combining batch and 
 
 **Build:**
 - [ ] `ops/reconcile.py`: batch job comparing decision-log impressions against pacing counters and campaign delivery; reports discrepancies (there will be some, per Phase 5's known flaw) with tolerances.
-- [ ] Retraining path: `make retrain` builds training data from decision logs (not the original synthetic history), producing a candidate model version with an eval report comparing it to live. **Forward pointer from Phase 4:** real-time (Redis) features were structurally excluded from every Phase 4 model config — no historical log of past Redis state existed to join against synthetic-history impressions. Once the decision log (Phase 5) is capturing per-request feature values (including real-time ones) at serving time, this is the natural point to add Redis-backed features (e.g. `user_session_active`, `user_current_ride_type`) to a pinned feature list; `ranking/train.py` needs no code change for this, only a feature-list config addition.
+- [ ] Retraining path: `make retrain` builds training data from decision logs (not the original synthetic history), producing a candidate model version with an eval report comparing it to live. **Forward pointer from Phase 4:** real-time (Redis) features were structurally excluded from every Phase 4 model config — no historical log of past Redis state existed to join against synthetic-history impressions. Once the decision log (Phase 5) is capturing per-request feature values (including real-time ones) at serving time, this is the natural point to add Redis-backed features (e.g. `user_session_active`, `user_current_ride_type`) to a pinned feature list; `ranking/train.py` needs no code change for this, only a feature-list config addition. **Second forward pointer from Phase 4:** static ad attributes (`category` as a direct feature, `advertiser_name`) also aren't used by any Phase 4 model config — a deliberate baseline-first choice, not an oversight. Worth exploring here too: register them in `common/registry.yaml`, add a new model config referencing them, and compare its eval report against the live version's on the identical holdout to see how much AUC improves.
 - [ ] Experiment readout: small notebook/script computing per-arm CTR with confidence intervals from the decision log, joined on logged assignment. README note (not code) on why observational CTR comparisons across arms are trustworthy here (randomized assignment) and what would break trust (assignment drift, logging loss) — plus a paragraph mapping this to incrementality/lift measurement for brand campaigns, which is out of build scope.
 
 **Acceptance criteria:**
