@@ -75,6 +75,15 @@ def record_delivery(redis_client: redis.Redis, campaign_row: dict[str, Any]) -> 
     return current
 
 
+def get_delivered(redis_client: redis.Redis, campaign_row: dict[str, Any]) -> int:
+    """Read-only lookup of the lifetime delivered count, without
+    incrementing — used before arbitration decides a winner (arbitrate()
+    needs to know current delivery to judge "behind schedule" before
+    record_delivery() is ever called for this request)."""
+    key = _DELIVERED_KEY.format(campaign_id=campaign_row["campaign_id"])
+    return int(redis_client.get(key) or 0)
+
+
 def elapsed_flight_fraction(now: dt.date, flight_start: dt.date, flight_end: dt.date) -> float:
     total_days = (flight_end - flight_start).days
     if total_days <= 0:

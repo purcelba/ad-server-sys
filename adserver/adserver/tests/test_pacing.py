@@ -10,6 +10,7 @@ from adserver.adserver.pacing import (
     arbitrate,
     decrement_capacity,
     elapsed_flight_fraction,
+    get_delivered,
     get_remaining_capacity,
     is_behind_schedule,
     record_delivery,
@@ -80,6 +81,15 @@ def test_record_delivery_increments_and_returns_running_count(redis_client, camp
     assert record_delivery(redis_client, row) == 1
     assert record_delivery(redis_client, row) == 2
     assert record_delivery(redis_client, row) == 3
+
+
+@requires_infra
+def test_get_delivered_is_read_only(redis_client, campaign_id):
+    row = _guaranteed_row(campaign_id)
+    assert get_delivered(redis_client, row) == 0
+    record_delivery(redis_client, row)
+    assert get_delivered(redis_client, row) == 1
+    assert get_delivered(redis_client, row) == 1  # reading again doesn't increment
 
 
 def test_elapsed_flight_fraction_at_start_middle_end():
