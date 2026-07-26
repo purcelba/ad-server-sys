@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -381,3 +382,60 @@ def test_ac3_guaranteed_delivery_within_10_percent_of_goal_over_simulated_flight
     assert 0.9 * impression_goal <= delivered <= 1.1 * impression_goal, (
         f"delivered={delivered}, expected within +/-10% of {impression_goal}"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC4: concurrency test demonstrating the pacing overshoot — a locked
+# project decision (phases.md), not a bug to fix. Uses a threading.Barrier
+# to force the exact race window deterministically, rather than relying on
+# real OS thread-scheduling luck to reproduce it reliably in a fast test.
+# ---------------------------------------------------------------------------
+
+
+@requires_infra
+def test_ac4_two_concurrent_requests_both_decrement_the_last_unit():
+    """Sets a campaign's remaining capacity to exactly 1 (the last
+    servable unit), then has two threads both read that value BEFORE
+    either writes back (forced via a Barrier) — reproducing the exact
+    race `pacing.decrement_capacity()`'s plain GET-then-SET allows: both
+    threads see remaining=1 (both consider themselves eligible and
+    proceed to serve), so 2 requests get served against a budget that
+    should only have allowed 1. This is `phases.md`'s locked decision
+    ("pacing counters are best-effort, no transactions... a feature of
+    the project, not a bug") — the fix (a real system would use a Lua
+    script, DECRBY/INCRBY, or a reservation with rollback — see
+    adserver/adserver/README.md) is deliberately not built."""
+    redis_client = get_redis_client()
+    campaign_id = f"c_ac4_{uuid.uuid4().hex[:8]}"
+    row = {"campaign_id": campaign_id, "demand_type": "auction", "budget": 1.0}
+
+    pacing.get_remaining_capacity(redis_client, row)  # initializes the counter to 1.0
+
+    barrier = threading.Barrier(2)
+    served: list[int] = []
+    served_lock = threading.Lock()
+
+    def racer() -> None:
+        remaining = pacing.get_remaining_capacity(redis_client, row)
+        barrier.wait()  # both threads now hold the SAME pre-decrement read
+        if remaining > 0:
+            with served_lock:
+                served.append(1)
+            pacing.decrement_capacity(redis_client, row, amount=1.0)
+
+    threads = [threading.Thread(target=racer) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    final_remaining = pacing.get_remaining_capacity(redis_client, row)
+
+    # the overshoot: 2 requests were actually served against a budget of 1
+    assert len(served) == 2, "both concurrent requests should have seen remaining=1 and proceeded to serve"
+    # the counter itself doesn't even go negative - it silently ends up
+    # looking perfectly consistent (0 remaining), masking that 2 units
+    # were actually consumed, not 1. This is exactly what makes the flaw
+    # dangerous in practice: nothing about the counter's own state signals
+    # that anything went wrong.
+    assert final_remaining == 0.0
