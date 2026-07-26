@@ -44,17 +44,22 @@ the other two, never stored, imported by both the training path
 limitation, not a design choice.** Redis (Phase 2) state is TTL'd and
 ephemeral; there's no historical log of past Redis values to join against
 a 20-day-old synthetic impression, so `V1_CONFIG`/`V2_CONFIG`'s pinned
-feature lists only draw from batch + context + cross features. **The
-moment a historical record of real-time feature values exists — i.e. once
-Phase 5's decision log (its system of record) is logging per-request feature values (including
-real-time ones) at serving time — retraining should start incorporating
-them.** Concretely, that's Phase 6's `make retrain` (training from logged
-decisions instead of synthetic history — Phase 5 builds the decision log
-itself, Phase 6 is what actually trains from it): the natural point to add
-Redis-backed features like `user_session_active` or
-`user_current_ride_type` to a pinned feature list, since only then does
-point-in-time training data for them exist. Nothing in `train.py` needs
-to change for that — a future feature list config is all that's required.
+feature lists only draw from batch + context + cross features.
+
+**Resolved in Phase 6 (`retrain.py`, not this module).** Once Phase 5's
+decision log is logging per-request feature values (including real-time
+ones) at serving time, retraining from it directly — instead of Phase
+0's synthetic history — makes real-time features trainable for the first
+time. `retrain.py`'s `RETRAIN_CONFIG` is `V1_CONFIG`'s feature set plus
+`user_session_active` (cast to 0/1) — the concrete, minimal fulfillment
+of the pointer this section used to describe prospectively.
+`user_current_destination_category` is categorical and would need
+one-hot/embedding infrastructure neither `train.py` nor `retrain.py`
+otherwise needs; left for a future config. Nothing in `train.py` itself
+needed to change — `retrain.py` is a separate module with its own,
+simpler data pipeline (no point-in-time join: the decision log already
+has features resolved as of serving time), reusing `PctrModel` and
+`model_registry` unchanged.
 
 **Model artifact contract** (`model.py`): `PctrModel` wraps any fitted
 scikit-learn-API estimator (`.predict_proba`) plus its pinned, ordered
