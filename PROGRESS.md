@@ -79,6 +79,29 @@ recorded here as an explicit amendment instead. `phases.md`'s Phase 0 build
 item and AC2 were updated to mention `rides.parquet`; all Phase 0 tests
 (now 26) still pass.
 
+**Amendment (during Phase 5 planning, flagged before making the
+change):** `campaigns.parquet` had no way to represent "this campaign
+purchased targeting on an audience" — `audiences.yaml`/
+`audience_memberships` (Phase 1) only say which *users* belong to an
+audience, nothing says which *campaigns* target one, which Phase 5's
+audience routing rule (candidate retrieval must exclude a campaign from
+users outside its targeted audience) needs. Resolved by adding
+`targeted_audiences: list[str]` to `datagen/campaigns.py`'s generated
+schema — empty for nearly every campaign (untargeted, unaffected by
+audience membership, per the spec's own "eligibility only, and only when
+purchased" rule), with exactly two campaigns targeted deterministically
+and thematically (mirroring `lifts.py`'s own segment x category pairing):
+the first active `travel` campaign targets `frequent_airport_travelers`,
+the first active `transit` campaign targets `weekday_commuters`. Same
+category of gap and same fix pattern as `rides.parquet` above — touches
+Phase 0's already-tagged code, flagged before the change, `phase-0`'s tag
+not moved, recorded here as an explicit amendment. Caught one real bug
+while building it: an early version mutated the module-level targeting
+dict directly via `dict.pop()`, which silently broke every call after the
+first in the same process — fixed by copying it locally per call, and a
+new regression test (`test_generate_campaigns_is_idempotent_across_repeated_calls`)
+guards against it recurring. All Phase 0 tests (now 35) still pass.
+
 ## Phase 1 — Feature registry + batch feature pipeline (`phase-1`)
 
 **Built:** `common/registry.yaml` + `registry.py` (10 features declared —

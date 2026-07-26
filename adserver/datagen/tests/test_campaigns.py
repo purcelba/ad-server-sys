@@ -1,6 +1,7 @@
 import numpy as np
+import polars as pl
 
-from adserver.datagen.campaigns import N_CAMPAIGNS, generate_campaigns
+from adserver.datagen.campaigns import AUDIENCE_TARGETING_BY_CATEGORY, N_CAMPAIGNS, generate_campaigns
 from adserver.datagen.lifts import CATEGORIES
 
 
@@ -41,3 +42,34 @@ def test_status_enum_not_degenerate():
     statuses = set(campaigns["status"].unique().to_list())
     assert statuses.issubset({"active", "paused", "ended"})
     assert len(statuses) > 1
+
+
+def test_exactly_one_active_campaign_targets_each_named_audience():
+    campaigns = generate_campaigns(np.random.default_rng(1))
+    targeted = campaigns.filter(pl.col("targeted_audiences").list.len() > 0)
+
+    assert targeted.height == len(AUDIENCE_TARGETING_BY_CATEGORY)
+    assert set(targeted["status"].to_list()) == {"active"}
+    got = {
+        row["category"]: row["targeted_audiences"][0]
+        for row in targeted.to_dicts()
+    }
+    assert got == AUDIENCE_TARGETING_BY_CATEGORY
+
+
+def test_untargeted_campaigns_have_an_empty_list_not_null():
+    campaigns = generate_campaigns(np.random.default_rng(1))
+    untargeted = campaigns.filter(pl.col("targeted_audiences").list.len() == 0)
+    assert untargeted.height == N_CAMPAIGNS - len(AUDIENCE_TARGETING_BY_CATEGORY)
+    assert untargeted["targeted_audiences"].null_count() == 0
+
+
+def test_generate_campaigns_is_idempotent_across_repeated_calls():
+    """Guards against the module-level AUDIENCE_TARGETING_BY_CATEGORY dict
+    being mutated by a prior call (a real bug caught during development:
+    an early version used dict.pop() directly on the module constant,
+    which left it empty and broke every call after the first)."""
+    first = generate_campaigns(np.random.default_rng(1))
+    second = generate_campaigns(np.random.default_rng(1))
+    assert first.equals(second)
+    assert AUDIENCE_TARGETING_BY_CATEGORY == {"travel": "frequent_airport_travelers", "transit": "weekday_commuters"}

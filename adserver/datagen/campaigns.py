@@ -30,6 +30,24 @@ FLIGHT_START_JITTER_DAYS = (-5, 20)  # relative to HISTORY_START
 FLIGHT_DURATION_DAYS = (10, 40)
 
 
+# Phase 5 amendment (flagged, phase-0 tag not moved — see PROGRESS.md):
+# campaign audience targeting didn't exist anywhere in the data model.
+# audiences.yaml/audience_memberships (Phase 1) say which *users* belong
+# to an audience; nothing said which *campaigns* purchased targeting on
+# one, which Phase 5's audience routing rule (retrieval must exclude a
+# campaign from users outside its targeted audience) needs. Exactly two
+# campaigns are targeted, deterministically and thematically (mirroring
+# lifts.py's own segment x category pairing): the first active `travel`
+# campaign targets `frequent_airport_travelers`, the first active
+# `transit` campaign targets `weekday_commuters`. Every other campaign is
+# untargeted (empty list) — unaffected by audience membership, per the
+# spec's own "eligibility only, and only when purchased" rule.
+AUDIENCE_TARGETING_BY_CATEGORY = {
+    "travel": "frequent_airport_travelers",
+    "transit": "weekday_commuters",
+}
+
+
 def generate_campaigns(rng: np.random.Generator) -> pl.DataFrame:
     """Generate the campaigns.parquet catalog deterministically from `rng`."""
     rows: list[dict] = []
@@ -73,9 +91,18 @@ def generate_campaigns(rng: np.random.Generator) -> pl.DataFrame:
                         "flight_start": flight_start,
                         "flight_end": flight_end,
                         "status": status,
+                        "targeted_audiences": [],
                     }
                 )
                 campaign_num += 1
+
+    remaining_targeting = dict(AUDIENCE_TARGETING_BY_CATEGORY)  # local copy - never mutate the module constant
+    for row in rows:
+        if not remaining_targeting:
+            break
+        if row["category"] not in remaining_targeting or row["status"] != "active":
+            continue
+        row["targeted_audiences"] = [remaining_targeting.pop(row["category"])]
 
     return pl.DataFrame(
         rows,
@@ -90,6 +117,7 @@ def generate_campaigns(rng: np.random.Generator) -> pl.DataFrame:
             "flight_start": pl.Date,
             "flight_end": pl.Date,
             "status": pl.Utf8,
+            "targeted_audiences": pl.List(pl.Utf8),
         },
     ).sort("campaign_id")
 
