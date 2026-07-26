@@ -1,4 +1,4 @@
-.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train eval-plots
+.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train eval-plots serve-ads loadtest-serve serve-bidder
 
 up:
 	docker compose up -d
@@ -50,3 +50,12 @@ train: demo
 
 eval-plots:
 	uv run python -m adserver.ranking.eval_plots
+
+serve-bidder:
+	uv run python -m adserver.bidder_stub.service
+
+serve-ads: features
+	uv run python -m adserver.adserver.service
+
+loadtest-serve:
+	uv run python -m adserver.adserver.loadtest

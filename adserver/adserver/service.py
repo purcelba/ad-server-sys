@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import gc
+import multiprocessing
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import anyio.to_thread
 import httpx
 import polars as pl
 import redis
+import threadpoolctl
 import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -39,6 +44,19 @@ HOUSE_AD_CAMPAIGN_ID = "house_ad"
 
 FEATURE_TIMEOUT_S = 0.020
 BIDDER_TIMEOUT_S = 0.030
+
+# A single scorer.score() call for v2 (HistGradientBoostingClassifier)
+# measured at ~2300ms average under 50 concurrent Python threads, vs
+# ~5.5ms sequential — sklearn's internal OpenMP/BLAS thread pool
+# oversubscribes badly when many concurrent request-handling threads each
+# try to spawn their own internal parallelism for a single-row prediction
+# that doesn't need it. Limiting every thread-pooled library to 1 thread
+# per worker process (real concurrency already comes from multiple
+# uvicorn worker PROCESSES below, not from threads within one) fixed it:
+# same benchmark measured ~23ms average, ~108ms p99 afterward.
+threadpoolctl.threadpool_limits(1)
+
+WORKER_COUNT = min(8, multiprocessing.cpu_count())
 
 
 class ServeRequest(BaseModel):
@@ -86,8 +104,27 @@ def _compute_popularity_ranking(http_client: httpx.Client, campaigns: pl.DataFra
     return sorted(campaign_ids, key=_ctr, reverse=True)
 
 
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    # Starlette's default AnyIO threadpool caps sync `def` endpoints at 40
+    # concurrent workers per process - under sustained load with several
+    # I/O-bound stages (feature fetch, bidder call) per request, in-flight
+    # requests can back up past that cap and queue, inflating whichever
+    # stage's wall-clock timer happens to be running when a queued thread
+    # finally gets scheduled. Same fix feature_service/service.py needed.
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 200
+    yield
+
+
 def create_app(data_dir: Path = Path("data")) -> FastAPI:
-    app = FastAPI()
+    # A full cyclic-GC pass mid-request was Phase 3's dominant source of
+    # tail latency under load for feature_service - same fix here: this
+    # service allocates almost no reference cycles per request (plain
+    # dicts/dataclasses/pydantic models), so raise the thresholds and
+    # freeze startup allocations out of future collections.
+    gc.set_threshold(50_000, 500, 500)
+
+    app = FastAPI(lifespan=_lifespan)
     campaigns = pl.read_parquet(data_dir / "campaigns.parquet")
     campaign_by_id = {row["campaign_id"]: row for row in campaigns.to_dicts()}
     audiences = load_audiences(AUDIENCES_PATH)
@@ -103,6 +140,9 @@ def create_app(data_dir: Path = Path("data")) -> FastAPI:
             scorers[version] = None  # degrades to house ad at request time for this arm
 
     popularity_ranking = _compute_popularity_ranking(http_client, campaigns)
+
+    gc.collect()
+    gc.freeze()
 
     @app.get("/health")
     def health():
@@ -298,7 +338,19 @@ def create_app(data_dir: Path = Path("data")) -> FastAPI:
 
 
 def main() -> None:
-    uvicorn.run(create_app(), host="0.0.0.0", port=HTTP_PORT)
+    # factory=True: uvicorn imports this module and calls create_app()
+    # itself, once per worker process (same pattern as
+    # feature_service/service.py, for the same reason - a single Python
+    # process's event loop does real per-request work, in this case
+    # heavier than feature_service's, so it needs the same fix).
+    uvicorn.run(
+        "adserver.adserver.service:create_app",
+        factory=True,
+        host="0.0.0.0",
+        port=HTTP_PORT,
+        workers=WORKER_COUNT,
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":
