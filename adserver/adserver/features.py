@@ -24,13 +24,15 @@ USER_FEATURE_NAMES = [
     "user_rides_per_week",
     "user_account_age_days",
     "audience_memberships",
-    # real-time - not a pinned model input yet (Phase 4's documented
-    # limitation), but AC6's freshness test needs this one specifically
-    # logged with its freshness_status. user_session_active and
-    # user_current_ride_type are dropped: nothing reads them, and each
-    # extra name is another per-feature DynamoDB round trip inside this
-    # 20ms budget (see features.py's/service.py's latency notes).
+    # real-time - AC6's freshness test needs user_current_destination_category
+    # logged with its freshness_status. user_session_active is fetched too
+    # (flagged Phase 6 amendment to this already-tagged phase-5 list): the
+    # decision log needs its actual per-request value for ranking/retrain.py
+    # to train on it at all, per Phase 4's forward pointer - the extra
+    # per-feature DynamoDB round trip is accepted as the cost of that.
+    # user_current_ride_type stays dropped: nothing reads it.
     "user_current_destination_category",
+    "user_session_active",
 ]
 AD_FEATURE_NAMES = ["ad_ctr_7d", "ad_ctr_30d", "ad_impressions_7d", "campaign_spend_yesterday"]
 
