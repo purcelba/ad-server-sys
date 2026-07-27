@@ -658,3 +658,88 @@ model config using static ad attributes — `category`, `advertiser_name`
 — compared against the live version's AUC) was explicitly out of the
 approved Phase 6 plan's scope and not pursued this phase; still open in
 `phases.md`'s Phase 6 build item for a future pass.
+
+## Phase 7 — Debug UI + ops dashboard (`phase-7`)
+
+**Built:** `ui/logic.py` (plain, `st.*`-free functions — decision-log
+lookup by `request_id`, request-rate math from two `/metrics` polls,
+campaign display labels — kept separate so the tabs' actual logic is
+unit-testable without driving Streamlit); `ui/rider_tab.py` (Tab 1 —
+user picker, event form firing through the exact same `POST :8002/events`
+endpoint `mini.html` already used since Phase 2, a "Serve ad" button
+calling `/serve` and rendering the decision-log debug trail, and a
+separate live `feature_service` call for freshness badges); `ui/ops_tab.py`
+(Tab 2 — request rate/p99-by-stage/fallback-rung counts from `adserver`'s
+`/metrics`, consumer lag from `stream_features`', spend/delivery and arm
+split reusing Phase 6's `ops.reconcile.reconcile()`/`ops.readout.per_arm_ctr()`
+directly, checkbox-gated auto-refresh via a `sleep()`+`st.rerun()` loop);
+`ui/app.py` (`st.tabs(["Rider", "Ops"])`, `make ui`); `make serve-events`
+(missing even though `publish_api.py` has existed since Phase 2). Added
+`streamlit` as a new dependency. Both build items and both acceptance
+criteria checked off in `phases.md`. 286 tests total, all passing against
+live infra.
+
+**Decisions made:**
+- **`mini.html`/`publish_api.py` stay untouched.** The Rider tab is a new
+  Streamlit client that calls the same `POST :8002/events` endpoint
+  server-side, per phases.md's literal wording ("fires real session
+  events through the same publish endpoint") — no second Kafka producer.
+- **Freshness badges can't come from the decision log.**
+  `scoring.py::from_online_result()` unwraps `FeatureValue.value` before
+  merging into what gets logged, so `freshness_status` never reaches
+  `decision_log.jsonl`. The Rider tab calls `feature_service` directly
+  (reusing `features.py`'s existing `fetch_user_features()`) for that
+  metadata, separately from the decision-log-sourced debug panel.
+- **A real, discovered bug in this phase's own first draft, not a
+  pre-existing one:** `ops_tab.py` originally polled every `/metrics`
+  endpoint with a fresh one-shot `httpx.get()` per call. `adserver` runs
+  multiple uvicorn worker processes, each with its own independent
+  in-memory `Metrics()` instance (no shared/aggregated store — the
+  project's "inspectable with curl, no Prometheus stack" convention,
+  Phase 5). A new connection per poll gets distributed across workers
+  roughly at random by the OS — confirmed directly, repeated one-shot
+  polls against a live server returned wildly different `request_count`
+  values poll to poll (0, 2, 148...), which would have made every number
+  the Ops tab shows meaningless. Fixed within Phase 7's own scope (no
+  Phase 5 code touched) by polling through one persistent, keep-alive
+  `httpx.Client` (`st.cache_resource`) instead — its connection stays
+  pinned to one worker, so every number is real and internally
+  consistent (rising counts, shifting latency), just scoped to that one
+  worker's share of traffic rather than the full 9-worker aggregate.
+  Verified end-to-end after the fix: a real `feature_service` outage
+  produced a clean `0 -> 90` fallback-count rise (100% fallback rate
+  during the outage window) plus a features-stage latency collapse
+  (connection-refused fails near-instantly instead of timing out) — both
+  observed through the tab's own `_poll()`/`METRICS_URLS`, matching AC2.
+- **AC1/AC2 verified by hand, per the approved plan** — matching Phase
+  2 AC5's precedent for this kind of "fires an event, watch it
+  propagate" proof. AC1: picking a `traveler`-segment user (`u_0011`),
+  serving once, firing `destination_entered{category: food}` (an
+  unboosted baseline), serving again, then firing
+  `destination_entered{category: travel}` and serving a third time,
+  drove `c_0028` (an untargeted, active `travel`-category campaign)'s
+  pCTR from 0.0664 to exactly 0.0996 — precisely the `scoring.py`
+  `DESTINATION_MATCH_BOOST = 1.5x` — via the identical `/events` ->
+  `/serve` -> decision-log flow the Rider tab's buttons drive. AC2: see
+  the discovered-bug entry above. `streamlit.testing.v1.AppTest` was
+  tried first for a fully automated walkthrough but doesn't fit this
+  app — `app.py` renders both tab bodies on every script run (Streamlit
+  tab semantics), so instantiating it always executes the Ops tab's
+  `sleep()`+`st.rerun()` auto-refresh loop too, which hangs synchronously
+  under `AppTest` rather than yielding control back to the test the way
+  a real browser session would. Not worth adding a test-only escape
+  hatch to production code for; fell back to the plan's approved manual
+  verification method, backed by driving the tabs' own underlying
+  functions directly (not reimplementing them) so the proof exercises
+  real code, not a hand-simulation of it.
+- **A real, if noisy, pre-existing signal surfaced during testing, not a
+  new one:** even with `feature_service` fully healthy, a meaningful
+  fraction of `/serve` requests still hit
+  `feature_service_down_popularity_fallback` (the ad server's 20ms
+  feature-fetch budget vs. `feature_service`'s real ~10-40ms observed
+  latency under load) — the same tight-budget tradeoff Phase 5's own AC1
+  tuning notes and Phase 6's real-traffic runs already documented, not
+  something Phase 7 introduced or needs to fix.
+
+**Not addressed / deferred:** none — every build item and every
+acceptance criterion is checked off.

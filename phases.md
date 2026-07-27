@@ -211,11 +211,11 @@ model is revisited anyway.
 **Goal:** two panes of glass — one for the request path, one for the system.
 
 **Build:**
-- [ ] `ui/` (Streamlit): Tab 1 "Rider": the full-featured successor to the Phase 2 mini page — pick a user, enter a destination (fires real session events through the same publish endpoint), see the served ad plus a debug panel — candidates, features (with freshness badges), scores, arbitration outcome, fallback rung, latency by stage. Tab 2 "Ops": request rate, p99 by stage, fallback-rung counts, consumer lag, spend/delivery by campaign, experiment arm split — polled from the services' `/metrics` and the decision log.
+- [x] `ui/` (Streamlit): Tab 1 "Rider": the full-featured successor to the Phase 2 mini page — pick a user, enter a destination (fires real session events through the same publish endpoint), see the served ad plus a debug panel — candidates, features (with freshness badges), scores, arbitration outcome, fallback rung, latency by stage. Tab 2 "Ops": request rate, p99 by stage, fallback-rung counts, consumer lag, spend/delivery by campaign, experiment arm split — polled from the services' `/metrics` and the decision log.
 
 **Acceptance criteria:**
-- [ ] 1. Typing a travel destination visibly changes the served ad / scores for a traveler-primed user within seconds.
-- [ ] 2. Running any Phase 5 failure scenario is visible on the Ops tab (fallback counts rise, stage latency shifts) without reading logs.
+- [x] 1. Typing a travel destination visibly changes the served ad / scores for a traveler-primed user within seconds.
+- [x] 2. Running any Phase 5 failure scenario is visible on the Ops tab (fallback counts rise, stage latency shifts) without reading logs.
 
 ---
 
