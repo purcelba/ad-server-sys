@@ -14,6 +14,25 @@ Spend/delivery and arm-split panels reuse `ops.reconcile.reconcile()` and
 `ops/` is batch-tooling library code (the same category `publish_api.py`
 already imports `datagen.replay` from), not another service to call over
 HTTP.
+
+**Polling uses one persistent, keep-alive `httpx.Client`, not a fresh
+connection per poll - discovered necessary, not a style choice.**
+`adserver/adserver/service.py` runs multiple uvicorn worker processes
+(`workers=WORKER_COUNT`), each with its own independent in-memory
+`Metrics()` instance (no shared/aggregated metrics store - consistent
+with this project's "keep it inspectable with curl, no Prometheus stack"
+convention). A one-shot `httpx.get()` opens a new TCP connection each
+call, which the OS distributes across workers roughly at random -
+confirmed directly: repeated one-shot polls during a live test returned
+wildly different `request_count` values (0, 2, 148...) poll to poll, one
+call per worker. A single persistent client's connection stays pinned to
+one worker for its keep-alive lifetime (also confirmed directly: 8
+consecutive polls over one client returned the identical value every
+time) - so every number this tab shows is real and internally
+consistent (rising counts, shifting latency), just scoped to whichever
+one worker its connection landed on rather than every worker's
+aggregate. Documented here because it's a real, load-bearing reason for
+this design, not obvious from the code alone.
 """
 
 from __future__ import annotations
@@ -52,9 +71,14 @@ def _load_users_by_id() -> dict[str, dict[str, Any]]:
     return {r["user_id"]: r for r in pl.read_parquet(DATA_DIR / "users.parquet").to_dicts()}
 
 
+@st.cache_resource
+def _metrics_client() -> httpx.Client:
+    return httpx.Client()
+
+
 def _poll(url: str) -> dict[str, Any] | None:
     try:
-        resp = httpx.get(url, timeout=2.0)
+        resp = _metrics_client().get(url, timeout=2.0)
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPError:
