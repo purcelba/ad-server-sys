@@ -1,4 +1,4 @@
-.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train eval-plots serve-ads loadtest-serve serve-bidder reconcile retrain readout
+.PHONY: up down test demo eda reach features replay consumer serve-features loadtest-features train eval-plots serve-ads loadtest-serve serve-bidder reconcile retrain readout serve-events ui
 
 up:
 	docker compose up -d
@@ -68,3 +68,9 @@ retrain:
 
 readout:
 	uv run python -m adserver.ops.readout
+
+serve-events: demo
+	uv run python -m adserver.ui.publish_api
+
+ui:
+	uv run streamlit run adserver/ui/app.py
